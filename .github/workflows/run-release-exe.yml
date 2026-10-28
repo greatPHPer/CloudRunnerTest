@@ -1,0 +1,107 @@
+name: Run GitHub Release EXE
+
+on:
+  workflow_dispatch:
+    inputs:
+      exe_url:
+        description: "HTTPS URL to a Windows .exe asset under a GitHub Release"
+        required: true
+        type: string
+        default: "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.exe"
+      sha256:
+        description: "Expected SHA-256 from a trusted publisher/release (64 hex characters)"
+        required: true
+        type: string
+        default: "a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627"
+      arguments:
+        description: "Command-line arguments"
+        required: false
+        type: string
+        default: "--version"
+
+permissions: {}
+
+jobs:
+  run-exe:
+    runs-on: windows-latest
+    timeout-minutes: 3
+    steps:
+      - name: Download, verify, and run the EXE
+        shell: pwsh
+        env:
+          EXE_URL: ${{ inputs.exe_url }}
+          EXPECTED_SHA256: ${{ inputs.sha256 }}
+          EXE_ARGUMENTS: ${{ inputs.arguments }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $uri = $null
+          if (-not [Uri]::TryCreate($env:EXE_URL, [UriKind]::Absolute, [ref]$uri)) {
+            throw 'Please provide a valid absolute URL.'
+          }
+          if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'github.com' -or $uri.Query -or $uri.Fragment) {
+            throw 'Only clean HTTPS GitHub Release asset URLs are accepted.'
+          }
+          $assetPath = [Uri]::UnescapeDataString($uri.AbsolutePath)
+          if ($assetPath -notmatch '^/[^/]+/[^/]+/releases/download/[^/]+/[^/]+\.exe$') {
+            throw 'URL must be a direct .exe asset under /owner/repo/releases/download/tag/.'
+          }
+          if ($env:EXPECTED_SHA256 -notmatch '^[A-Fa-f0-9]{64}$') {
+            throw 'Expected SHA-256 must contain exactly 64 hexadecimal characters.'
+          }
+
+          $exePath = Join-Path $env:RUNNER_TEMP 'cloudrunner-test.exe'
+          try {
+            Write-Host 'Downloading the release asset to the temporary cloud VM...'
+            & curl.exe --fail --location --max-redirs 5 --max-filesize 26214400 --proto '=https' --proto-redir '=https' --output $exePath $uri.AbsoluteUri
+            if ($LASTEXITCODE -ne 0) { throw 'Download failed or exceeded the 25 MB limit.' }
+
+            $file = Get-Item -LiteralPath $exePath
+            if ($file.Length -lt 2 -or $file.Length -gt 25MB) { throw 'Downloaded file must be between 2 bytes and 25 MB.' }
+
+            $stream = [IO.File]::OpenRead($exePath)
+            try { $first = $stream.ReadByte(); $second = $stream.ReadByte() }
+            finally { $stream.Dispose() }
+            if ($first -ne 0x4D -or $second -ne 0x5A) { throw 'Downloaded asset does not have a Windows executable header.' }
+
+            $actualHash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
+            if ($actualHash -ne $env:EXPECTED_SHA256.ToUpperInvariant()) {
+              throw "SHA-256 mismatch. Expected $($env:EXPECTED_SHA256); got $actualHash."
+            }
+            Write-Host "Downloaded and checksum-verified $($file.Length) bytes."
+            Write-Host 'Running the executable on the temporary Windows runner (60-second limit)...'
+
+            $start = [Diagnostics.ProcessStartInfo]::new()
+            $start.FileName = $exePath
+            $start.WorkingDirectory = $env:RUNNER_TEMP
+            $start.UseShellExecute = $false
+            $start.CreateNoWindow = $true
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            $start.Arguments = $env:EXE_ARGUMENTS
+
+            $process = [Diagnostics.Process]::new()
+            $process.StartInfo = $start
+            try {
+              if (-not $process.Start()) { throw 'Windows could not start the executable.' }
+              $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+              $stderrTask = $process.StandardError.ReadToEndAsync()
+              if (-not $process.WaitForExit(60000)) {
+                $process.Kill($true)
+                throw 'The executable exceeded the 60-second limit and was stopped.'
+              }
+              $stdout = $stdoutTask.GetAwaiter().GetResult()
+              $stderr = $stderrTask.GetAwaiter().GetResult()
+              Write-Host '----- STDOUT -----'
+              if ($stdout) { Write-Output $stdout } else { Write-Host '(no standard output)' }
+              Write-Host '----- STDERR -----'
+              if ($stderr) { Write-Output $stderr } else { Write-Host '(no standard error)' }
+              Write-Host "Exit code: $($process.ExitCode)"
+              if ($process.ExitCode -ne 0) { throw "Executable returned non-zero exit code $($process.ExitCode)." }
+            }
+            finally { $process.Dispose() }
+          }
+          finally {
+            Remove-Item -LiteralPath $exePath -Force -ErrorAction SilentlyContinue
+            Write-Host 'Temporary executable cleanup finished.'
+          }
