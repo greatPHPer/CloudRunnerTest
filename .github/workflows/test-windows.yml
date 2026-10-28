@@ -1,0 +1,26 @@
+
+name: Test Windows Cloud Runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Check Windows environment
+        shell: pwsh
+        run: |
+          Write-Output "Hello from the Windows cloud runner!"
+          Write-Output "Operating system:"
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object Caption, OSArchitecture
+          Write-Output "Processor:"
+          Get-CimInstance Win32_Processor |
+            Select-Object -First 1 Name
+  
