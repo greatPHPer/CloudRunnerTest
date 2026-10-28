@@ -1,0 +1,21 @@
+
+name: Test Cloud Runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Test cloud execution
+        run: |
+          echo "Hello from GitHub's cloud runner!"
+          echo "Operating system:"
+          uname -a
+          echo "Current directory:"
+          pwd
