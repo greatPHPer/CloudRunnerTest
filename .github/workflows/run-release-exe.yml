@@ -68,12 +68,12 @@ jobs:
             $report.Add('SHA-256 expected: supplied')
 
             Write-Host 'Downloading the release asset to the temporary cloud VM...'
-            & curl.exe --fail --location --max-redirs 5 --max-filesize 26214400 --proto '=https' --proto-redir '=https' --output $exePath $uri.AbsoluteUri
-            if ($LASTEXITCODE -ne 0) { throw 'Download failed or exceeded the 25 MB limit.' }
+            & curl.exe --fail --location --max-redirs 5 --max-filesize 104857600 --proto '=https' --proto-redir '=https' --output $exePath $uri.AbsoluteUri
+            if ($LASTEXITCODE -ne 0) { throw 'Download failed or exceeded the 100 MB limit.' }
 
             $file = Get-Item -LiteralPath $exePath
             $sizeBytes = $file.Length
-            if ($file.Length -lt 2 -or $file.Length -gt 25MB) { throw 'Downloaded file must be between 2 bytes and 25 MB.' }
+            if ($file.Length -lt 2 -or $file.Length -gt 100MB) { throw 'Downloaded file must be between 2 bytes and 100 MB.' }
 
             $stream = [IO.File]::OpenRead($exePath)
             try { $first = $stream.ReadByte(); $second = $stream.ReadByte() }
