@@ -29,9 +29,9 @@ jobs:
       - name: Download, verify, and run the EXE
         shell: pwsh
         env:
-          EXE_URL: \${{ inputs.exe_url }}
-          EXPECTED_SHA256: \${{ inputs.sha256 }}
-          EXE_ARGUMENTS: \${{ inputs.arguments }}
+          EXE_URL: ${{ inputs.exe_url }}
+          EXPECTED_SHA256: ${{ inputs.sha256 }}
+          EXE_ARGUMENTS: ${{ inputs.arguments }}
         run: |
           $ErrorActionPreference = 'Stop'
           $reportPath = Join-Path $env:RUNNER_TEMP 'cloudrunner-exe-result.txt'
@@ -175,7 +175,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloudrunner-exe-result-\${{ github.run_number }}
-          path: \${{ runner.temp }}/cloudrunner-exe-result.txt
+          name: cloudrunner-exe-result-${{ github.run_number }}
+          path: ${{ runner.temp }}/cloudrunner-exe-result.txt
           if-no-files-found: warn
           retention-days: 1
