@@ -1,94 +1,124 @@
 # CloudRunner
 
-CloudRunner is an experimental WinForms application for displaying and controlling a Windows desktop through WebView2.
+CloudRunner is a zero-hosting-cost Windows application runner. Each user runs applications on their own Windows PC; CloudRunner does not provide a centrally hosted Windows desktop.
 
-## Current direction
+## Current Phase 1 implementation
 
-- GUI streaming prototype: local interactive Windows desktop.
-- Viewer: WinForms + Microsoft Edge WebView2.
-- Screen server: TightVNC Server for Windows.
-- Browser viewer: noVNC.
-- WebSocket bridge: websockify.
-- Network scope: localhost only for this prototype.
-- GitHub Actions: retain the existing workflow for headless EXE smoke tests; do not use hosted Actions runners as a live GUI hosting service.
+- **Controller:** C# WinForms + WebView2.
+- **Local execution agent:** separate, hidden WinExe running under the signed-in Windows user.
+- **Local IPC:** randomly named Windows named pipe with `PipeOptions.CurrentUserOnly`; the controller keeps the pipe open so the agent can clean up if the controller exits.
+- **Release input:** direct HTTPS GitHub Release `.exe` URL plus expected SHA-256.
+- **Download checks:** approved HTTPS GitHub release redirect hosts, 100 MB maximum, MZ header check and SHA-256 verification.
+- **Process lifecycle:** one application at a time, individual command-line arguments, stop the managed process tree and remove its temporary job directory.
+- **Window preview:** WgcSharp / Windows Graphics Capture, targeting the launched process's top-level HWND.
+- **Cloud compute:** none.
+- **Remote video streaming:** not implemented yet.
+- **Remote pairing/signalling:** not implemented yet.
 
-## Repository layout
+## Project layout
 
     CloudRunnerTest
     ├── .github/workflows
-    │   ├── diagnose-gui-session.yml
-    │   └── run-release-exe.yml
+    │   ├── build-cloudrunner-winforms.yml
+    │   ├── diagnose-gui-session.yml       # old GitHub runner diagnostic experiment
+    │   └── run-release-exe.yml            # headless Actions smoke test; not GUI hosting
     ├── CloudRunner.WinForms
     │   ├── CloudRunner.WinForms.csproj
     │   ├── Program.cs
     │   ├── MainForm.cs
-    │   └── LocalStreamingBridge.cs
-    └── scripts
-        └── Setup-LocalStreaming.ps1
+    │   ├── HostAgentClient.cs
+    │   ├── WindowsCommandLineParser.cs
+    │   └── WindowCaptureService.cs
+    └── CloudRunner.HostAgent
+        ├── CloudRunner.HostAgent.csproj
+        ├── Program.cs
+        ├── AgentProtocol.cs
+        ├── AgentServer.cs
+        ├── ReleaseAssetDownloader.cs
+        └── ExecutionSession.cs
 
 ## Requirements
 
-- Windows 10/11 x64.
-- .NET 10 SDK to build the project.
-- Microsoft Edge WebView2 Runtime (Evergreen).
-- Python 3 installed with the Python launcher (py.exe) or python.exe.
-- TightVNC Server for Windows, installed separately.
+- Windows 10 version 1903 (build 18362) or later for Windows Graphics Capture.
+- .NET 10 SDK to build.
+- Microsoft Edge WebView2 Evergreen Runtime.
+- A Windows 10/11 x64 machine with a compatible Direct3D 11 graphics device for window capture.
+- CloudRunner should be started as a standard, non-elevated user for downloaded EXE execution.
 
-## Setup
+## Build
 
-1. Install TightVNC from the official download page: https://www.tightvnc.com/download/
-2. Run TightVNC Server in application mode for the logged-in Windows user. Do not use a Windows service for this first interactive-session test.
-3. Configure TightVNC to use its **traditional/classical VNC authentication** compatibility mode for this noVNC prototype. TightVNC 4's newer SRP-6a authentication is not listed in noVNC's documented supported authentication methods. Classical VNC authentication has an eight-character password limit; use it only for this localhost-only test.
-4. Set a VNC password.
-5. In TightVNC's access-control settings, allow loopback/local connections only. Do not expose TCP 5900 to your LAN or the internet. Do not configure router port forwarding.
-5. From the repository root, run:
+From the repository root:
 
-       powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Setup-LocalStreaming.ps1
+    dotnet restore .\CloudRunner.WinForms\CloudRunner.WinForms.csproj
+    dotnet build .\CloudRunner.WinForms\CloudRunner.WinForms.csproj -c Release --no-restore
 
-   This creates a private Python virtual environment under the local app-data CloudRunner folder, installs websockify 0.13.0 into that environment, and downloads noVNC 1.7.0. It does not install Python or TightVNC globally.
+The WinForms project builds the HostAgent project and copies its executable and runtime files into the `Agent` subfolder beside the controller.
 
-6. Build and run:
+Alternatively, run the manual GitHub Actions workflow:
 
-       dotnet restore .\CloudRunner.WinForms\CloudRunner.WinForms.csproj
-       dotnet run --project .\CloudRunner.WinForms\CloudRunner.WinForms.csproj
+https://github.com/greatPHPer/CloudRunnerTest/actions/workflows/build-cloudrunner-winforms.yml
 
-7. Click Refresh prerequisites, then Start local viewer. noVNC should ask for the VNC password. The password is not put in the URL or saved by CloudRunner. If noVNC reports an unsupported security type, recheck that TightVNC is set to classical VNC authentication rather than SRP-6a.
+The workflow uploads a short-retention build artifact.
 
-## Local ports
+## Run locally
 
-| Component | Address | Port |
-|---|---|---:|
-| TightVNC | 127.0.0.1 | 5900 |
-| websockify + noVNC HTTP | 127.0.0.1 | 6080 |
+    dotnet run --project .\CloudRunner.WinForms\CloudRunner.WinForms.csproj
 
-The WebSocket bridge explicitly binds to 127.0.0.1:6080 and forwards only to 127.0.0.1:5900. Do not change either address to 0.0.0.0. The app stops the websockify process when the viewer is stopped or CloudRunner closes. It does not stop or reconfigure TightVNC.
+1. Click **Start Notepad test**.
+2. Wait for the process ID and window handle to appear.
+3. Click **Capture application window**.
+4. Confirm the preview shows the Notepad window rather than the entire desktop.
+5. Click **Stop application**.
 
-## Important same-machine capture limitation
+For a release EXE:
 
-TightVNC normally shares the host desktop. When the noVNC viewer is displayed on that same desktop, the viewer itself is part of the captured screen and can create a recursive "hall of mirrors" effect. This is a property of whole-desktop capture, not a WebView2 defect.
+1. Paste a direct GitHub Release asset URL in the URL field.
+2. Paste the publisher-provided SHA-256 in the checksum field.
+3. Optionally supply command-line arguments.
+4. Click **Download, verify and run EXE**.
+5. Capture its window after the HostAgent reports a non-zero HWND.
 
-The first verification can confirm the VNC and WebSocket path, but a clean embedded single-application experience needs application-window capture (if supported by the selected server/version) or a separate viewer machine/session. Do not claim the application-only capture stage is complete until it is tested.
+## Execution security
 
-## Security notes
+CloudRunner is a launcher, not a malware sandbox.
 
-- This is a single-user local prototype, not a public remote desktop service.
-- The free TightVNC edition does not encrypt the complete VNC screen/input stream. Keep it on loopback for this prototype.
-- Never expose ports 5900 or 6080 to the public internet.
-- Do not put VNC credentials in command-line arguments, URLs, source code, or GitHub repository secrets.
-- Do not run untrusted downloaded executables as Administrator.
-- The current prototype does not download or execute arbitrary EXEs. Process lifecycle and isolated execution are later phases.
+- Only direct HTTPS GitHub Release asset URLs are accepted.
+- Redirects are limited to HTTPS GitHub release asset hosts.
+- The downloaded EXE is limited to 100 MB and must have an MZ header.
+- The exact expected SHA-256 must be supplied and match.
+- Arguments are passed as separate argument entries, not concatenated into a shell command.
+- Downloaded executables are not launched with elevation; the agent refuses to run them when it detects an elevated Administrator token.
+- The agent restricts its named pipe to the current Windows user.
+- Only one managed process is supported in this phase.
 
-## Licensing
+**A matching SHA-256 proves file integrity against the checksum supplied by the user; it does not prove that the software is safe.** Run only software from publishers you trust. A standard Windows user token still has access to that user's data and credentials.
 
-- TightVNC: see the official product information at https://www.tightvnc.com/.
-- noVNC: MPL-2.0. See https://github.com/novnc/noVNC/blob/master/LICENSE.txt.
-- websockify: see https://github.com/novnc/websockify.
-- Microsoft WebView2 SDK: see its NuGet package and Microsoft documentation.
+The current implementation does not provide a hardened sandbox, per-app restricted token, AppContainer, Windows Sandbox, Hyper-V isolation, or antivirus verdict.
 
-## Next milestones
+## Window-capture notes
 
-1. Verify local VNC connection and WebView2 rendering.
-2. Resolve the same-desktop recursive capture issue with tested window-only capture or a separate viewer session.
-3. Add a CloudRunner.HostAgent running in the logged-in user session.
-4. Add safe release download, SHA-256 verification, process launch/stop and session cleanup.
-5. Evaluate a separately hosted Windows machine only after the local streaming prototype is proven.
+The preview uses Windows Graphics Capture and requests the selected application HWND rather than the whole monitor. Microsoft documents the HWND-based capture interop from Windows 10 build 18362. The capture service currently produces a JPEG still preview on demand.
+
+This phase does **not** yet provide continuous 30-FPS streaming, remote mouse/keyboard control, peer-to-peer WebRTC, or a public session pairing service. Those are separate milestones.
+
+Minimized or closed windows may not yield a frame. Some applications use multiple processes or child windows; the current HostAgent reports the launched process's main top-level window only.
+
+## Zero-cost public distribution
+
+CloudRunner itself can be distributed through GitHub Releases. Every public user runs the app on their own Windows PC. CloudRunner does not consume your work laptop or any central Windows VM.
+
+The later optional remote collaboration feature will use direct WebRTC peer-to-peer connections where network topology permits. A TURN relay would still be needed for some NAT/firewall combinations; those sessions cannot be guaranteed to work on a strict zero-budget plan.
+
+## Third-party components
+
+- Microsoft WebView2 SDK: Microsoft package and runtime.
+- WgcSharp 1.1.1: MIT licensed; see [Third-party notices](THIRD-PARTY-NOTICES.md).
+- Windows Graphics Capture: Windows platform API.
+
+## Development roadmap
+
+1. **Phase 1:** local HostAgent, verified download, process lifecycle and one-window preview.
+2. **Phase 2:** continuous window-frame capture and local rendering without VNC.
+3. **Phase 3:** WebRTC peer-to-peer video and input with explicit host consent.
+4. **Phase 4:** free-tier signalling/pairing, quotas and abuse controls.
+5. **Phase 5:** review hardening, installer, public documentation and publisher trust/safety workflow.
