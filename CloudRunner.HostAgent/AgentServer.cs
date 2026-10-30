@@ -11,26 +11,32 @@ internal sealed class AgentServer : IAsyncDisposable
 
     public async Task RunAsync(string pipeName, CancellationToken cancellationToken)
     {
-        var shouldExit = false;
+        await using var pipe = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            maxNumberOfServerInstances: 1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
+        await pipe.WaitForConnectionAsync(cancellationToken);
+
+        using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, leaveOpen: true);
+        await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true)
+        {
+            AutoFlush = true
+        };
+
+        var shouldExit = false;
         while (!shouldExit && !cancellationToken.IsCancellationRequested)
         {
-            await using var pipe = new NamedPipeServerStream(
-                pipeName,
-                PipeDirection.InOut,
-                maxNumberOfServerInstances: 1,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-
-            await pipe.WaitForConnectionAsync(cancellationToken);
-
-            using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, leaveOpen: true);
-            await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true)
-            {
-                AutoFlush = true
-            };
-
+            // The connection stays open for the life of the controller. If the controller
+            // crashes or is killed, EOF causes this agent to stop its child process.
             var line = await reader.ReadLineAsync(cancellationToken);
+            if (line is null)
+            {
+                break;
+            }
+
             if (string.IsNullOrWhiteSpace(line))
             {
                 continue;
@@ -56,37 +62,51 @@ internal sealed class AgentServer : IAsyncDisposable
             }
 
             AgentResponse response;
-            switch (request.Command.Trim().ToLowerInvariant())
+            try
             {
-                case "start":
-                    response = await _session.StartAsync(
-                        request.Url ?? string.Empty,
-                        request.Sha256 ?? string.Empty,
-                        request.Arguments ?? [],
-                        cancellationToken);
-                    break;
+                switch (request.Command.Trim().ToLowerInvariant())
+                {
+                    case "start":
+                        response = await _session.StartAsync(
+                            request.Url ?? string.Empty,
+                            request.Sha256 ?? string.Empty,
+                            request.Arguments ?? [],
+                            cancellationToken);
+                        break;
 
-                case "start-notepad":
-                    response = await _session.StartNotepadAsync(cancellationToken);
-                    break;
+                    case "start-notepad":
+                        response = await _session.StartNotepadAsync(cancellationToken);
+                        break;
 
-                case "status":
-                    response = _session.GetStatus();
-                    break;
+                    case "status":
+                        response = _session.GetStatus();
+                        break;
 
-                case "stop":
-                    response = await _session.StopAsync();
-                    break;
+                    case "stop":
+                        response = await _session.StopAsync();
+                        break;
 
-                case "shutdown":
-                    response = await _session.StopAsync();
-                    shouldExit = true;
-                    response = response with { Message = "HostAgent shutdown requested. " + response.Message };
-                    break;
+                    case "shutdown":
+                        response = await _session.StopAsync();
+                        shouldExit = true;
+                        response = response with
+                        {
+                            Message = "HostAgent shutdown requested. " + response.Message
+                        };
+                        break;
 
-                default:
-                    response = new AgentResponse(false, "Unknown HostAgent command.");
-                    break;
+                    default:
+                        response = new AgentResponse(false, "Unknown HostAgent command.");
+                        break;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                response = new AgentResponse(false, "The HostAgent command was cancelled.");
+            }
+            catch (Exception ex)
+            {
+                response = new AgentResponse(false, ex.Message);
             }
 
             await writer.WriteLineAsync(JsonSerializer.Serialize(response, JsonOptions));
