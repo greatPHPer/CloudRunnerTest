@@ -5,28 +5,35 @@ namespace CloudRunner.WinForms;
 
 internal sealed class MainForm : Form
 {
-    private readonly LocalStreamingBridge _bridge = new();
-    private readonly WebView2 _viewer = new();
+    private readonly HostAgentClient _agent = new();
+    private readonly WebView2 _preview = new();
     private readonly TextBox _log = new();
-    private readonly Label _vncStatus = new();
-    private readonly Label _toolsStatus = new();
-    private readonly Label _bridgeStatus = new();
-    private readonly Button _connectButton = new();
-    private bool _viewerInitialized;
+    private readonly TextBox _urlInput = new();
+    private readonly TextBox _shaInput = new();
+    private readonly TextBox _argumentsInput = new();
+    private readonly Label _status = new();
+    private readonly Label _windowInfo = new();
+    private readonly Button _runButton = new();
+    private readonly Button _captureButton = new();
+
+    private long? _activeWindowHandle;
+    private bool _webViewReady;
+    private bool _shutdownInProgress;
+    private bool _allowClose;
 
     public MainForm()
     {
-        Text = "CloudRunner – Local GUI Streaming Prototype";
+        Text = "CloudRunner – Local Windows Runner";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(1050, 680);
-        Size = new Size(1350, 850);
-        BackColor = Color.FromArgb(18, 24, 38);
+        MinimumSize = new Size(1100, 720);
+        Size = new Size(1450, 900);
+        BackColor = Color.FromArgb(17, 24, 39);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 9F);
 
         BuildLayout();
         Shown += MainForm_Shown;
-        FormClosed += (_, _) => _bridge.Dispose();
+        FormClosing += MainForm_FormClosing;
     }
 
     private void BuildLayout()
@@ -34,189 +41,204 @@ internal sealed class MainForm : Form
         var header = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 66,
-            Padding = new Padding(18, 10, 18, 8),
+            Height = 72,
+            Padding = new Padding(20, 10, 20, 8),
             BackColor = Color.FromArgb(24, 34, 52)
         };
 
-        var title = new Label
+        header.Controls.Add(new Label
         {
             Text = "CloudRunner",
             Dock = DockStyle.Top,
-            Height = 28,
-            Font = new Font("Segoe UI Semibold", 16F),
+            Height = 30,
+            Font = new Font("Segoe UI Semibold", 17F),
             ForeColor = Color.White
-        };
-        var subtitle = new Label
+        });
+        header.Controls.Add(new Label
         {
-            Text = "Local Windows desktop streaming · WebView2 · localhost only",
+            Text = "Run on this Windows PC · Verify releases · Preview the application window",
             Dock = DockStyle.Fill,
-            ForeColor = Color.FromArgb(170, 185, 205)
-        };
-        header.Controls.Add(subtitle);
-        header.Controls.Add(title);
+            ForeColor = Color.FromArgb(174, 190, 210)
+        });
 
         var root = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            Size = new Size(1300, 760),
+            Size = new Size(1400, 800),
+            SplitterDistance = 390,
             FixedPanel = FixedPanel.Panel1,
-            BackColor = Color.FromArgb(18, 24, 38),
-            BorderStyle = BorderStyle.None,
-            Panel1MinSize = 280,
-            Panel2MinSize = 500,
-            SplitterDistance = 310
+            Panel1MinSize = 350,
+            Panel2MinSize = 600,
+            BackColor = Color.FromArgb(17, 24, 39),
+            BorderStyle = BorderStyle.None
         };
 
         var left = new Panel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(16),
-            BackColor = Color.FromArgb(24, 34, 52),
-            AutoScroll = true
+            Padding = new Padding(18),
+            AutoScroll = true,
+            BackColor = Color.FromArgb(24, 34, 52)
         };
 
-        var heading = MakeLabel("SESSION SETUP", 10, true);
-        heading.Top = 8;
-        heading.Left = 4;
-        heading.Width = 260;
-        left.Controls.Add(heading);
+        left.Controls.Add(MakeLabel("RUN A WINDOWS APPLICATION", 10F, true, 4, 8, 340, 24));
 
-        AddStatus(left, "TightVNC server (127.0.0.1:5900)", _vncStatus, 48);
-        AddStatus(left, "noVNC + websockify tools", _toolsStatus, 105);
-        AddStatus(left, "WebSocket bridge (127.0.0.1:6080)", _bridgeStatus, 162);
+        _urlInput.Multiline = true;
+        _urlInput.ScrollBars = ScrollBars.Vertical;
+        _urlInput.PlaceholderText = "https://github.com/owner/repo/releases/download/tag/application.exe";
+        _urlInput.Height = 54;
+        AddField(left, "Direct GitHub Release EXE URL", _urlInput, 42, 64);
 
-        var setupButton = MakeButton("Install noVNC + websockify", 232);
-        setupButton.Click += (_, _) => RunSetupScript();
-        left.Controls.Add(setupButton);
+        _shaInput.PlaceholderText = "64-character SHA-256";
+        AddField(left, "Expected SHA-256", _shaInput, 120, 54);
 
-        var tightVncButton = MakeButton("Open TightVNC download", 278);
-        tightVncButton.Click += (_, _) =>
-            Process.Start(new ProcessStartInfo("https://www.tightvnc.com/download/") { UseShellExecute = true });
-        left.Controls.Add(tightVncButton);
+        _argumentsInput.Multiline = true;
+        _argumentsInput.ScrollBars = ScrollBars.Vertical;
+        _argumentsInput.PlaceholderText = "Optional arguments, e.g. --mode demo";
+        _argumentsInput.Height = 54;
+        AddField(left, "Command-line arguments", _argumentsInput, 186, 64);
 
-        var notepadButton = MakeButton("Open Notepad test app", 324);
-        notepadButton.Click += (_, _) => StartNotepad();
+        _runButton.Text = "Download, verify and run EXE";
+        StylePrimaryButton(_runButton);
+        _runButton.SetBounds(8, 260, 340, 42);
+        _runButton.Click += async (_, _) => await RunReleaseAsync();
+        left.Controls.Add(_runButton);
+
+        var notepadButton = MakeButton("Start Notepad test", 312);
+        notepadButton.Click += async (_, _) => await StartNotepadAsync();
         left.Controls.Add(notepadButton);
 
-        _connectButton.Text = "Start local viewer";
-        _connectButton.SetBounds(8, 382, 260, 40);
-        _connectButton.FlatStyle = FlatStyle.Flat;
-        _connectButton.FlatAppearance.BorderSize = 0;
-        _connectButton.BackColor = Color.FromArgb(37, 99, 235);
-        _connectButton.ForeColor = Color.White;
-        _connectButton.Font = new Font("Segoe UI Semibold", 10F);
-        _connectButton.Click += async (_, _) => await StartViewerAsync();
-        left.Controls.Add(_connectButton);
+        _captureButton.Text = "Capture application window";
+        _captureButton.SetBounds(8, 362, 340, 40);
+        _captureButton.Enabled = false;
+        StyleSecondaryButton(_captureButton);
+        _captureButton.Click += async (_, _) => await CapturePreviewAsync();
+        left.Controls.Add(_captureButton);
 
-        var stopButton = MakeButton("Stop viewer / bridge", 430);
-        stopButton.Click += (_, _) => StopViewer();
-        left.Controls.Add(stopButton);
-
-        var refreshButton = MakeButton("Refresh prerequisites", 476);
+        var refreshButton = MakeButton("Refresh process / window status", 408);
         refreshButton.Click += async (_, _) => await RefreshStatusAsync();
         left.Controls.Add(refreshButton);
+
+        var stopButton = MakeButton("Stop application", 454);
+        stopButton.Click += async (_, _) => await StopApplicationAsync();
+        left.Controls.Add(stopButton);
+
+        _status.SetBounds(8, 514, 340, 44);
+        _status.Font = new Font("Segoe UI Semibold", 10F);
+        _status.ForeColor = Color.Goldenrod;
+        _status.Text = "HostAgent not started";
+        left.Controls.Add(_status);
+
+        _windowInfo.SetBounds(8, 562, 340, 64);
+        _windowInfo.ForeColor = Color.FromArgb(190, 202, 220);
+        _windowInfo.Text = "No application window selected.";
+        left.Controls.Add(_windowInfo);
 
         var note = new Label
         {
             Left = 8,
-            Top = 540,
-            Width = 260,
-            Height = 205,
-            ForeColor = Color.FromArgb(185, 198, 215),
-            Text = "Before connecting:\r\n" +
-                   "1. Install TightVNC 4.\r\n" +
-                   "2. Start its Server in application mode.\r\n" +
-                   "3. Select classical/legacy VNC authentication for noVNC compatibility (TightVNC 4 SRP-6a is not listed as supported by noVNC).\r\n" +
-                   "4. Set a VNC password (classical VNC authentication has an 8-character limit).\r\n" +
-                   "5. Restrict access to loopback only.\r\n\r\n" +
-                   "CloudRunner does not verify the VNC access-control setting yet.\r\n\r\n" +
-                   "Same-PC note: whole-desktop capture can mirror this viewer. Clean app-only capture is a later milestone.\r\n\r\n" +
-                   "No VNC password is stored in the viewer URL."
+            Top = 638,
+            Width = 340,
+            Height = 125,
+            ForeColor = Color.FromArgb(170, 186, 205),
+            Text = "Security: downloaded programs run with your Windows user permissions. " +
+                   "Use trusted publishers only. CloudRunner refuses to launch release EXEs when it is running elevated as Administrator. " +
+                   "This is not a sandbox."
         };
         left.Controls.Add(note);
 
-        var viewerSplit = new SplitContainer
+        var right = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            Size = new Size(1000, 760),
+            Size = new Size(950, 800),
             Orientation = Orientation.Horizontal,
+            SplitterDistance = 590,
             Panel1MinSize = 300,
-            Panel2MinSize = 90,
-            BackColor = Color.FromArgb(18, 24, 38),
-            SplitterDistance = 570
+            Panel2MinSize = 100,
+            BackColor = Color.FromArgb(17, 24, 39)
         };
 
-        _viewer.Dock = DockStyle.Fill;
-        _viewer.DefaultBackgroundColor = Color.FromArgb(12, 16, 25);
-        viewerSplit.Panel1.Controls.Add(_viewer);
+        _preview.Dock = DockStyle.Fill;
+        _preview.DefaultBackgroundColor = Color.FromArgb(10, 15, 25);
+        right.Panel1.Controls.Add(_preview);
 
         _log.Dock = DockStyle.Fill;
         _log.Multiline = true;
         _log.ReadOnly = true;
         _log.ScrollBars = ScrollBars.Vertical;
-        _log.BackColor = Color.FromArgb(12, 16, 25);
-        _log.ForeColor = Color.FromArgb(205, 215, 230);
+        _log.BackColor = Color.FromArgb(10, 15, 25);
+        _log.ForeColor = Color.FromArgb(211, 220, 233);
         _log.BorderStyle = BorderStyle.None;
         _log.Font = new Font("Consolas", 9F);
-        viewerSplit.Panel2.Controls.Add(_log);
+        right.Panel2.Controls.Add(_log);
 
         root.Panel1.Controls.Add(left);
-        root.Panel2.Controls.Add(viewerSplit);
+        root.Panel2.Controls.Add(right);
 
         Controls.Add(root);
         Controls.Add(header);
     }
 
-    private static Label MakeLabel(string text, float size, bool bold) => new()
+    private static Label MakeLabel(
+        string text, float fontSize, bool bold, int left, int top, int width, int height) => new()
     {
         Text = text,
-        AutoSize = true,
-        Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular),
+        Left = left,
+        Top = top,
+        Width = width,
+        Height = height,
+        Font = new Font("Segoe UI", fontSize, bold ? FontStyle.Bold : FontStyle.Regular),
         ForeColor = Color.White
     };
 
-    private static Button MakeButton(string text, int top) => new()
+    private static void AddField(Panel parent, string caption, TextBox textBox, int labelTop, int boxTop)
     {
-        Text = text,
-        Left = 8,
-        Top = top,
-        Width = 260,
-        Height = 38,
-        FlatStyle = FlatStyle.Flat,
-        BackColor = Color.FromArgb(42, 55, 76),
-        ForeColor = Color.White,
-        Font = new Font("Segoe UI", 9.5F)
-    };
+        parent.Controls.Add(MakeLabel(caption, 9.5F, true, 8, labelTop, 340, 22));
+        textBox.SetBounds(8, boxTop, 340, textBox.Height == 0 ? 30 : textBox.Height);
+        textBox.BackColor = Color.FromArgb(12, 19, 32);
+        textBox.ForeColor = Color.White;
+        textBox.BorderStyle = BorderStyle.FixedSingle;
+        textBox.Font = new Font("Segoe UI", 9F);
+        parent.Controls.Add(textBox);
+    }
 
-    private static void AddStatus(Control parent, string caption, Label status, int top)
+    private static Button MakeButton(string text, int top)
     {
-        var label = new Label
-        {
-            Text = caption,
-            Left = 8,
-            Top = top,
-            Width = 260,
-            Height = 20,
-            ForeColor = Color.FromArgb(185, 198, 215)
-        };
-        status.SetBounds(8, top + 21, 260, 24);
-        status.Font = new Font("Segoe UI Semibold", 9F);
-        status.ForeColor = Color.Goldenrod;
-        status.Text = "Checking...";
-        parent.Controls.Add(label);
-        parent.Controls.Add(status);
+        var button = new Button { Text = text };
+        button.SetBounds(8, top, 340, 40);
+        StyleSecondaryButton(button);
+        return button;
+    }
+
+    private static void StylePrimaryButton(Button button)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.BackColor = Color.FromArgb(37, 99, 235);
+        button.ForeColor = Color.White;
+        button.Font = new Font("Segoe UI Semibold", 10F);
+        button.Cursor = Cursors.Hand;
+    }
+
+    private static void StyleSecondaryButton(Button button)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderColor = Color.FromArgb(65, 83, 110);
+        button.BackColor = Color.FromArgb(39, 53, 74);
+        button.ForeColor = Color.White;
+        button.Font = new Font("Segoe UI", 9.5F);
+        button.Cursor = Cursors.Hand;
     }
 
     private async void MainForm_Shown(object? sender, EventArgs e)
     {
         try
         {
-            await _viewer.EnsureCoreWebView2Async();
-            _viewerInitialized = true;
-            _viewer.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-            _viewer.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            _viewer.CoreWebView2.Settings.IsStatusBarEnabled = false;
+            await _preview.EnsureCoreWebView2Async();
+            _webViewReady = true;
+            _preview.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            _preview.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            _preview.CoreWebView2.Settings.IsStatusBarEnabled = false;
             ShowWelcomePage();
             Log("WebView2 initialized.");
         }
@@ -227,148 +249,224 @@ internal sealed class MainForm : Form
                 "Microsoft Edge WebView2 Runtime is required. Install the Evergreen WebView2 Runtime and reopen CloudRunner.\r\n\r\n" + ex.Message,
                 "WebView2 unavailable", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
 
-        await RefreshStatusAsync();
+    private async Task RunReleaseAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_urlInput.Text) || string.IsNullOrWhiteSpace(_shaInput.Text))
+        {
+            MessageBox.Show(this, "Enter a direct GitHub Release EXE URL and its expected SHA-256 checksum.",
+                "Missing information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        await RunCommandAsync(async () =>
+        {
+            var arguments = WindowsCommandLineParser.ParseArguments(_argumentsInput.Text);
+            Log("Starting HostAgent: downloading release asset and verifying SHA-256...");
+
+            var response = await _agent.SendAsync(new AgentCommand(
+                "start",
+                _urlInput.Text.Trim(),
+                _shaInput.Text.Trim(),
+                arguments));
+
+            ApplyAgentResponse(response);
+        });
+    }
+
+    private async Task StartNotepadAsync()
+    {
+        await RunCommandAsync(async () =>
+        {
+            Log("Starting the built-in Notepad test window through HostAgent...");
+            var response = await _agent.SendAsync(new AgentCommand("start-notepad"));
+            ApplyAgentResponse(response);
+        });
     }
 
     private async Task RefreshStatusAsync()
     {
-        var vnc = await _bridge.IsVncServerAvailableAsync();
-        _vncStatus.Text = vnc ? "● Detected on localhost" : "○ Not detected";
-        _vncStatus.ForeColor = vnc ? Color.LightGreen : Color.Orange;
-
-        var tools = _bridge.ToolsInstalled;
-        _toolsStatus.Text = tools ? "● Installed" : "○ Not installed";
-        _toolsStatus.ForeColor = tools ? Color.LightGreen : Color.Orange;
-
-        var bridge = await PortIsOpenAsync(LocalStreamingBridge.WebSocketPort);
-        _bridgeStatus.Text = bridge ? "● Port 6080 is listening" : "○ Stopped";
-        _bridgeStatus.ForeColor = bridge ? Color.LightGreen : Color.Orange;
-
-        Log($"Prerequisites refreshed: TightVNC={vnc}, tools={tools}, port6080={bridge}.");
+        await RunCommandAsync(async () =>
+        {
+            var response = await _agent.SendAsync(new AgentCommand("status"));
+            ApplyAgentResponse(response);
+        });
     }
 
-    private async Task StartViewerAsync()
+    private async Task StopApplicationAsync()
     {
-        _connectButton.Enabled = false;
+        await RunCommandAsync(async () =>
+        {
+            var response = await _agent.SendAsync(new AgentCommand("stop"));
+            ApplyAgentResponse(response);
+            if (response.Success)
+            {
+                _activeWindowHandle = null;
+                _captureButton.Enabled = false;
+                ShowWelcomePage();
+            }
+        });
+    }
+
+    private async Task CapturePreviewAsync()
+    {
+        if (_activeWindowHandle is not long hwnd || hwnd == 0)
+        {
+            MessageBox.Show(this, "No application window handle is available. Start an application and refresh status.",
+                "No capture target", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        _captureButton.Enabled = false;
         try
         {
-            Log("Checking local VNC server and starting WebSocket bridge...");
-            await _bridge.StartAsync();
-            await _viewer.EnsureCoreWebView2Async();
-            _viewerInitialized = true;
-            _viewer.Source = new Uri(_bridge.ViewerUrl);
-            Log("Viewer opened. Enter the TightVNC password in the noVNC prompt.");
-            await RefreshStatusAsync();
+            Log($"Capturing application window HWND=0x{hwnd:X} using Windows Graphics Capture...");
+            var jpegBytes = await WindowCaptureService.CaptureJpegAsync(hwnd);
+            await ShowCapturedImageAsync(jpegBytes);
+            Log($"Window preview captured ({jpegBytes.Length:N0} JPEG bytes).");
         }
         catch (Exception ex)
         {
-            Log("Could not start viewer: " + ex.Message);
+            Log("Window capture failed: " + ex.Message);
+            MessageBox.Show(this, ex.Message, "Window capture", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _captureButton.Enabled = _activeWindowHandle.HasValue;
+        }
+    }
+
+    private async Task ShowCapturedImageAsync(byte[] jpegBytes)
+    {
+        if (!_webViewReady)
+        {
+            await _preview.EnsureCoreWebView2Async();
+            _webViewReady = true;
+        }
+
+        var base64 = Convert.ToBase64String(jpegBytes);
+        _preview.NavigateToString($$"""
+            <!doctype html>
+            <html><head><meta charset="utf-8">
+            <style>
+              html,body{height:100%;margin:0;background:#0a0f19;color:#cbd5e1;font:14px 'Segoe UI',sans-serif}
+              body{display:grid;place-items:center;overflow:auto}
+              img{max-width:100%;max-height:100%;object-fit:contain}
+            </style></head>
+            <body><img alt="Captured application window" src="data:image/jpeg;base64,{{base64}}"></body></html>
+            """);
+    }
+
+    private void ApplyAgentResponse(AgentReply response)
+    {
+        Log(response.Message);
+        _status.Text = response.Success ? "● " + response.Message : "○ " + response.Message;
+        _status.ForeColor = response.Success ? Color.LightGreen : Color.Salmon;
+
+        if (response.ProcessId is int processId)
+        {
+            _windowInfo.Text = $"Process ID: {processId}\r\n" +
+                               $"Window: {response.WindowTitle ?? "(title not available)"}\r\n" +
+                               $"HWND: {(response.WindowHandle is long hwnd && hwnd != 0 ? $"0x{hwnd:X}" : "(not ready)")}";
+        }
+        else
+        {
+            _windowInfo.Text = "No application window selected.";
+        }
+
+        _activeWindowHandle = response.WindowHandle is > 0 ? response.WindowHandle : null;
+        _captureButton.Enabled = _activeWindowHandle.HasValue;
+    }
+
+    private async Task RunCommandAsync(Func<Task> action)
+    {
+        SetActionsEnabled(false);
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Log("ERROR: " + ex.Message);
+            _status.Text = "○ " + ex.Message;
+            _status.ForeColor = Color.Salmon;
             MessageBox.Show(this, ex.Message, "CloudRunner", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
-            _connectButton.Enabled = true;
+            SetActionsEnabled(true);
+            _captureButton.Enabled = _activeWindowHandle.HasValue;
         }
     }
 
-    private void StopViewer()
+    private void SetActionsEnabled(bool enabled)
     {
-        _bridge.Stop();
-        if (_viewerInitialized)
-            ShowWelcomePage();
-        Log("WebSocket bridge stopped. TightVNC server was not stopped.");
-        _ = RefreshStatusAsync();
+        _runButton.Enabled = enabled;
+        _captureButton.Enabled = enabled && _activeWindowHandle.HasValue;
     }
 
     private void ShowWelcomePage()
     {
-        if (!_viewerInitialized)
+        if (!_webViewReady)
+        {
             return;
+        }
 
-        _viewer.NavigateToString("""
+        _preview.NavigateToString("""
             <!doctype html>
             <html><head><meta charset="utf-8">
             <style>
-              html,body{height:100%;margin:0;background:#0c1019;color:#d5deeb;font:16px 'Segoe UI',sans-serif}
+              html,body{height:100%;margin:0;background:#0a0f19;color:#d8e2f0;font:16px 'Segoe UI',sans-serif}
               main{height:100%;display:grid;place-content:center;text-align:center}
-              h2{margin:0 0 12px;color:white;font-weight:600}
-              p{max-width:520px;line-height:1.6;color:#aab8cb}
+              h2{margin:0 0 12px;color:#fff;font-weight:600}
+              p{max-width:560px;line-height:1.65;color:#aab9cd}
               code{color:#93c5fd}
             </style></head>
-            <body><main><h2>CloudRunner local viewer</h2>
-            <p>Start TightVNC in application mode, then click <b>Start local viewer</b>.<br>
-            The noVNC page will ask for your VNC password.</p>
-            <p>Connections are configured for <code>127.0.0.1</code> only.</p>
+            <body><main><h2>CloudRunner application preview</h2>
+            <p>Start Notepad for a quick local test, or provide a trusted GitHub Release EXE URL and SHA-256.</p>
+            <p>After the application opens, click <b>Capture application window</b>.</p>
+            <p>This is a single-window still preview. Continuous video streaming is a later milestone.</p>
             </main></body></html>
             """);
-    }
-
-    private void StartNotepad()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true });
-            Log("Started Notepad. It should be visible on the Windows desktop.");
-        }
-        catch (Exception ex)
-        {
-            Log("Could not start Notepad: " + ex.Message);
-        }
-    }
-
-    private void RunSetupScript()
-    {
-        var script = Path.Combine(AppContext.BaseDirectory, "Setup-LocalStreaming.ps1");
-        if (!File.Exists(script))
-        {
-            MessageBox.Show(this,
-                "Setup-LocalStreaming.ps1 was not found. Run it from the repository's scripts folder.",
-                "Setup script missing", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        try
-        {
-            Process.Start(new ProcessStartInfo("powershell.exe")
-            {
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"",
-                UseShellExecute = true
-            });
-            Log("Started the local streaming tools setup script.");
-        }
-        catch (Exception ex)
-        {
-            Log("Could not start setup: " + ex.Message);
-        }
-    }
-
-    private static async Task<bool> PortIsOpenAsync(int port)
-    {
-        using var client = new System.Net.Sockets.TcpClient();
-        using var timeout = new CancellationTokenSource(500);
-        try
-        {
-            await client.ConnectAsync(System.Net.IPAddress.Loopback, port, timeout.Token);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private void Log(string message)
     {
         if (IsDisposed)
-            return;
-
-        if (InvokeRequired)
         {
-            BeginInvoke(new Action(() => Log(message)));
             return;
         }
 
         _log.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+    }
+
+    private async void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
+    {
+        if (_allowClose)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        if (_shutdownInProgress)
+        {
+            return;
+        }
+
+        _shutdownInProgress = true;
+        Enabled = false;
+
+        try
+        {
+            await _agent.DisposeAsync();
+        }
+        catch
+        {
+            // Closing should not be blocked by an unresponsive child agent.
+        }
+
+        _allowClose = true;
+        Close();
     }
 }
