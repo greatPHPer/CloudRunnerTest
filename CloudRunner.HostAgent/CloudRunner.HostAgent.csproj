@@ -9,4 +9,27 @@
     <AssemblyName>CloudRunner.HostAgent</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="../CloudRunner.TestWindow/CloudRunner.TestWindow.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="CopyCloudRunnerTestWindowAfterBuild" AfterTargets="Build">
+    <ItemGroup>
+      <_TestWindowBuildFiles Include="$(MSBuildProjectDirectory)/../CloudRunner.TestWindow/bin/$(Configuration)/net10.0-windows10.0.19041.0/*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_TestWindowBuildFiles)"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyCloudRunnerTestWindowAfterPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_TestWindowPublishFiles Include="$(MSBuildProjectDirectory)/../CloudRunner.TestWindow/bin/$(Configuration)/net10.0-windows10.0.19041.0/*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_TestWindowPublishFiles)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>
