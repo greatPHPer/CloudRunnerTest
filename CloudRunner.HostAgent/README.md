@@ -7,6 +7,7 @@ A per-user local process manager for CloudRunner. It is started by the WinForms 
 - `start`: download one direct GitHub Release `.exe`, verify its SHA-256, then launch it without elevation.
 - `status`: return the process ID and top-level window handle/title when available.
 - `stop`: terminate the process tree and remove its temporary job directory.
+- `start-test-window`: launch the bundled `CloudRunner.TestWindow.exe`, report its own top-level HWND and allow a capture smoke test.
 - `shutdown`: stop the current process and exit the agent.
 
 ## Security boundaries
@@ -20,5 +21,7 @@ A per-user local process manager for CloudRunner. It is started by the WinForms 
 - Named-pipe access is restricted with `PipeOptions.CurrentUserOnly`.
 - Only one managed application session is permitted at a time.
 - The launched process is assigned to a Windows Job Object with kill-on-close enabled, so the operating system terminates assigned processes if the HostAgent exits unexpectedly.
+
+The test window is a standalone WinForms executable bundled beside the HostAgent. It is intentionally used instead of `notepad.exe`, because modern Windows Notepad may delegate activation to another packaged process and exit normally before its window can be discovered.
 
 This is process hygiene, not a security sandbox. Downloaded code runs with the current user's permissions and may access that user's files, credentials, network and other resources. Do not run untrusted executables. A later public product needs additional isolation and a clear trust/consent model.
