@@ -74,8 +74,8 @@ internal sealed class AgentServer : IAsyncDisposable
                             cancellationToken);
                         break;
 
-                    case "start-notepad":
-                        response = await _session.StartNotepadAsync(cancellationToken);
+                    case "start-test-window":
+                        response = await _session.StartTestWindowAsync(cancellationToken);
                         break;
 
                     case "status":
