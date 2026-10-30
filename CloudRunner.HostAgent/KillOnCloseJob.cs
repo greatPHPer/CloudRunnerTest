@@ -11,7 +11,7 @@ namespace CloudRunner.HostAgent;
 internal sealed class KillOnCloseJob : IDisposable
 {
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
-    private const int JobObjectExtendedLimitInformation = 9;
+    private const int JobObjectInfoClassExtendedLimitInformation = 9;
 
     private IntPtr _handle;
 
@@ -34,7 +34,7 @@ internal sealed class KillOnCloseJob : IDisposable
             Marshal.StructureToPtr(information, pointer, fDeleteOld: false);
             if (!SetInformationJobObject(
                     _handle,
-                    JobObjectExtendedLimitInformation,
+                    JobObjectInfoClassExtendedLimitInformation,
                     pointer,
                     checked((uint)size)))
             {
