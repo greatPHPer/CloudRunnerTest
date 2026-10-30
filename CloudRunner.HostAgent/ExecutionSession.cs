@@ -249,7 +249,9 @@ internal sealed class ExecutionSession : IAsyncDisposable
             if (process.HasExited)
             {
                 throw new InvalidOperationException(
-                    $"The EXE exited during startup with code {process.ExitCode}.");
+                    $"The launched process exited before a top-level window was found (exit code {process.ExitCode}). " +
+                    "Some packaged Windows apps and launcher EXEs hand off to another process. " +
+                    "Use the executable that owns the actual application window.");
             }
 
             process.Refresh();
