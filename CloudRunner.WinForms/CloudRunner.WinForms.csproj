@@ -39,4 +39,16 @@
           SkipUnchangedFiles="true" />
   </Target>
 
+  <!-- The WebView2 package also adds its WPF wrapper reference for non-WPF
+       projects. CloudRunner uses the WinForms wrapper, so remove the unused
+       WPF assembly to avoid a WindowsBase version conflict during resolution. -->
+  <Target Name="RemoveUnusedWebView2WpfReference"
+          BeforeTargets="ResolveAssemblyReferences"
+          Condition="'$(UseWPF)' != 'true'">
+    <ItemGroup>
+      <Reference Remove="@(Reference)"
+                 Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
 </Project>
