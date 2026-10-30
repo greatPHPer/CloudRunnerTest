@@ -9,7 +9,7 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - **Local IPC:** randomly named Windows named pipe with `PipeOptions.CurrentUserOnly`; the controller keeps the pipe open so the agent can clean up if the controller exits.
 - **Release input:** direct HTTPS GitHub Release `.exe` URL plus expected SHA-256.
 - **Download checks:** approved HTTPS GitHub release redirect hosts, 100 MB maximum, MZ header check and SHA-256 verification.
-- **Process lifecycle:** one application at a time, individual command-line arguments, stop the managed process tree and remove its temporary job directory.
+- **Process lifecycle:** one application at a time, individual command-line arguments, Windows Job Object ownership with kill-on-close, stop the managed process tree and remove its temporary job directory.
 - **Window preview:** WgcSharp / Windows Graphics Capture, targeting the launched process's top-level HWND.
 - **Cloud compute:** none.
 - **Remote video streaming:** not implemented yet.
@@ -89,6 +89,7 @@ CloudRunner is a launcher, not a malware sandbox.
 - Arguments are passed as separate argument entries, not concatenated into a shell command.
 - Downloaded executables are not launched with elevation; the agent refuses to run them when it detects an elevated Administrator token.
 - The agent restricts its named pipe to the current Windows user.
+- The launched process is assigned to a Windows Job Object configured to terminate assigned processes when the HostAgent exits.
 - Only one managed process is supported in this phase.
 
 **A matching SHA-256 proves file integrity against the checksum supplied by the user; it does not prove that the software is safe.** Run only software from publishers you trust. A standard Windows user token still has access to that user's data and credentials.
