@@ -24,15 +24,18 @@ internal static class WindowCaptureService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // Auto tries Windows Graphics Capture first, then falls back to
+            // DXGI Desktop Duplication if WGC fails on this device/window.
             using var bitmap = WindowCapture.CaptureWindow(
                 new IntPtr(windowHandle),
-                CaptureStrategy.WgcOnly,
+                CaptureStrategy.Auto,
                 timeoutMs: 3000);
 
             if (bitmap is null)
             {
                 throw new InvalidOperationException(
-                    "Windows Graphics Capture did not return a frame. Make sure the application window is open, visible and not minimized.");
+                    "Both Windows Graphics Capture and the DXGI fallback failed to return a frame. " +
+                    "Make sure the application window is open, visible, not minimized, and displayed on a D3D11-capable desktop.");
             }
 
             using var output = new MemoryStream();
