@@ -54,7 +54,7 @@ internal sealed class ReleaseAssetDownloader
 
             while (true)
             {
-                var read = await input.ReadAsync(buffer, cancellationToken);
+                var read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
                 if (read == 0)
                 {
                     break;
