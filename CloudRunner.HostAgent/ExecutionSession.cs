@@ -23,7 +23,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
 
         if (_process is { HasExited: false })
         {
-            return CurrentProcessResponse("An EXE is already running. Stop it before starting another session.");
+            return CurrentProcessResponse("An EXE is already running. Stop it before starting another session.", success: false);
         }
 
         EnsureStandardUserContext();
@@ -106,7 +106,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
 
         if (_process is { HasExited: false })
         {
-            return CurrentProcessResponse("An EXE is already running. Stop it before starting the Notepad test.");
+            return CurrentProcessResponse("An EXE is already running. Stop it before starting the Notepad test.", success: false);
         }
 
         var notepadPath = Path.Combine(Environment.SystemDirectory, "notepad.exe");
@@ -221,7 +221,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
         return (process.MainWindowHandle.ToInt64(), process.MainWindowTitle);
     }
 
-    private AgentResponse CurrentProcessResponse(string message)
+    private AgentResponse CurrentProcessResponse(string message, bool success = true)
     {
         if (_process is null)
         {
@@ -232,7 +232,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
         {
             _process.Refresh();
             return new AgentResponse(
-                true,
+                success,
                 message,
                 _process.Id,
                 _process.MainWindowHandle.ToInt64(),
