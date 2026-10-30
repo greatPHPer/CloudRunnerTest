@@ -59,12 +59,13 @@ internal sealed class MainForm : Form
         var root = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            SplitterDistance = 310,
+            Size = new Size(1300, 760),
             FixedPanel = FixedPanel.Panel1,
             BackColor = Color.FromArgb(18, 24, 38),
             BorderStyle = BorderStyle.None,
             Panel1MinSize = 280,
-            Panel2MinSize = 500
+            Panel2MinSize = 500,
+            SplitterDistance = 310
         };
 
         var left = new Panel
@@ -135,11 +136,12 @@ internal sealed class MainForm : Form
         var viewerSplit = new SplitContainer
         {
             Dock = DockStyle.Fill,
+            Size = new Size(1000, 760),
             Orientation = Orientation.Horizontal,
-            SplitterDistance = 570,
             Panel1MinSize = 300,
             Panel2MinSize = 90,
-            BackColor = Color.FromArgb(18, 24, 38)
+            BackColor = Color.FromArgb(18, 24, 38),
+            SplitterDistance = 570
         };
 
         _viewer.Dock = DockStyle.Fill;
