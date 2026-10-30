@@ -38,8 +38,9 @@ CloudRunner is an experimental WinForms application for displaying and controlli
 
 1. Install TightVNC from the official download page: https://www.tightvnc.com/download/
 2. Run TightVNC Server in application mode for the logged-in Windows user. Do not use a Windows service for this first interactive-session test.
-3. Configure a strong VNC control password.
-4. In TightVNC's access-control settings, allow loopback/local connections only. Do not expose TCP 5900 to your LAN or the internet. Do not configure router port forwarding.
+3. Configure TightVNC to use its **traditional/classical VNC authentication** compatibility mode for this noVNC prototype. TightVNC 4's newer SRP-6a authentication is not listed in noVNC's documented supported authentication methods. Classical VNC authentication has an eight-character password limit; use it only for this localhost-only test.
+4. Set a VNC password.
+5. In TightVNC's access-control settings, allow loopback/local connections only. Do not expose TCP 5900 to your LAN or the internet. Do not configure router port forwarding.
 5. From the repository root, run:
 
        powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Setup-LocalStreaming.ps1
@@ -51,7 +52,7 @@ CloudRunner is an experimental WinForms application for displaying and controlli
        dotnet restore .\CloudRunner.WinForms\CloudRunner.WinForms.csproj
        dotnet run --project .\CloudRunner.WinForms\CloudRunner.WinForms.csproj
 
-7. Click Refresh prerequisites, then Start local viewer. noVNC should ask for the VNC password. The password is not put in the URL or saved by CloudRunner.
+7. Click Refresh prerequisites, then Start local viewer. noVNC should ask for the VNC password. The password is not put in the URL or saved by CloudRunner. If noVNC reports an unsupported security type, recheck that TightVNC is set to classical VNC authentication rather than SRP-6a.
 
 ## Local ports
 
