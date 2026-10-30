@@ -104,6 +104,8 @@ internal sealed class ReleaseAssetDownloader
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
             !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+            !uri.IsDefaultPort ||
+            !string.IsNullOrEmpty(uri.UserInfo) ||
             !string.IsNullOrEmpty(uri.Query) ||
             !string.IsNullOrEmpty(uri.Fragment))
         {
@@ -133,6 +135,8 @@ internal sealed class ReleaseAssetDownloader
         for (var redirect = 0; redirect <= MaximumRedirects; redirect++)
         {
             if (!string.Equals(current.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+                !current.IsDefaultPort ||
+                !string.IsNullOrEmpty(current.UserInfo) ||
                 !AllowedRedirectHosts.Contains(current.Host))
             {
                 throw new InvalidOperationException("GitHub redirected the download to an unapproved host.");
