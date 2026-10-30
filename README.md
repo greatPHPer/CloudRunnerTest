@@ -39,7 +39,7 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 
 ## Requirements
 
-- Windows 10 version 1903 (build 18362) or later for Windows Graphics Capture.
+- Windows 10 version 2004 (build 19041) or later for this build's Windows SDK target and WgcSharp package.
 - .NET 10 SDK to build.
 - Microsoft Edge WebView2 Evergreen Runtime.
 - A Windows 10/11 x64 machine with a compatible Direct3D 11 graphics device for window capture.
