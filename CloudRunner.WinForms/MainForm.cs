@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
 namespace CloudRunner.WinForms;
@@ -15,14 +17,29 @@ internal sealed class MainForm : Form
     private readonly Label _windowInfo = new();
     private readonly Button _runButton = new();
     private readonly Button _captureButton = new();
+    private readonly Button _startPreviewButton = new();
+    private readonly Button _stopPreviewButton = new();
 
     private long? _activeWindowHandle;
+    private CancellationTokenSource? _previewCts;
+    private Task? _previewTask;
+
+    private static readonly TimeSpan PreviewFrameDelay = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan MinimizedRetryDelay = TimeSpan.FromMilliseconds(500);
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
 
     private const int SwRestore = 9;
     private bool _webViewReady;
@@ -124,21 +141,35 @@ internal sealed class MainForm : Form
         _captureButton.Click += async (_, _) => await CapturePreviewAsync();
         left.Controls.Add(_captureButton);
 
-        var refreshButton = MakeButton("Refresh process / window status", 410);
+        _startPreviewButton.Text = "Start live preview";
+        _startPreviewButton.SetBounds(8, 410, 340, 40);
+        StyleSecondaryButton(_startPreviewButton);
+        _startPreviewButton.Enabled = false;
+        _startPreviewButton.Click += async (_, _) => await StartLivePreviewAsync();
+        left.Controls.Add(_startPreviewButton);
+
+        _stopPreviewButton.Text = "Stop live preview";
+        _stopPreviewButton.SetBounds(8, 456, 340, 40);
+        StyleSecondaryButton(_stopPreviewButton);
+        _stopPreviewButton.Enabled = false;
+        _stopPreviewButton.Click += async (_, _) => await StopLivePreviewAsync();
+        left.Controls.Add(_stopPreviewButton);
+
+        var refreshButton = MakeButton("Refresh process / window status", 502);
         refreshButton.Click += async (_, _) => await RefreshStatusAsync();
         left.Controls.Add(refreshButton);
 
-        var stopButton = MakeButton("Stop application", 456);
+        var stopButton = MakeButton("Stop application", 548);
         stopButton.Click += async (_, _) => await StopApplicationAsync();
         left.Controls.Add(stopButton);
 
-        _status.SetBounds(8, 512, 340, 48);
+        _status.SetBounds(8, 604, 340, 48);
         _status.Font = new Font("Segoe UI Semibold", 10F);
         _status.ForeColor = Color.Goldenrod;
         _status.Text = "HostAgent not started";
         left.Controls.Add(_status);
 
-        _windowInfo.SetBounds(8, 568, 340, 64);
+        _windowInfo.SetBounds(8, 660, 340, 64);
         _windowInfo.ForeColor = Color.FromArgb(190, 202, 220);
         _windowInfo.Text = "No application window selected.";
         left.Controls.Add(_windowInfo);
@@ -146,9 +177,9 @@ internal sealed class MainForm : Form
         var note = new Label
         {
             Left = 8,
-            Top = 640,
+            Top = 734,
             Width = 340,
-            Height = 125,
+            Height = 140,
             ForeColor = Color.FromArgb(170, 186, 205),
             Text = "Security: downloaded programs run with your Windows user permissions. " +
                    "Use trusted publishers only. CloudRunner refuses to launch release EXEs when it is running elevated as Administrator. " +
@@ -262,6 +293,8 @@ internal sealed class MainForm : Form
 
     private async Task RunReleaseAsync()
     {
+        await StopLivePreviewAsync();
+
         if (string.IsNullOrWhiteSpace(_urlInput.Text) || string.IsNullOrWhiteSpace(_shaInput.Text))
         {
             MessageBox.Show(this, "Enter a direct GitHub Release EXE URL and its expected SHA-256 checksum.",
@@ -286,6 +319,8 @@ internal sealed class MainForm : Form
 
     private async Task StartTestWindowAsync()
     {
+        await StopLivePreviewAsync();
+
         await RunCommandAsync(async () =>
         {
             Log("Starting the dedicated CloudRunner WinForms capture test window through HostAgent...");
@@ -305,6 +340,8 @@ internal sealed class MainForm : Form
 
     private async Task StopApplicationAsync()
     {
+        await StopLivePreviewAsync();
+
         await RunCommandAsync(async () =>
         {
             var response = await _agent.SendAsync(new AgentCommand("stop"));
@@ -313,6 +350,8 @@ internal sealed class MainForm : Form
             {
                 _activeWindowHandle = null;
                 _captureButton.Enabled = false;
+                _startPreviewButton.Enabled = false;
+                _stopPreviewButton.Enabled = false;
                 ShowWelcomePage();
             }
         });
@@ -327,6 +366,7 @@ internal sealed class MainForm : Form
             return;
         }
 
+        await StopLivePreviewAsync();
         _captureButton.Enabled = false;
         var previousWindowState = WindowState;
         try
@@ -361,8 +401,216 @@ internal sealed class MainForm : Form
                 Activate();
             }
 
-            _captureButton.Enabled = _activeWindowHandle.HasValue;
+            _captureButton.Enabled = _activeWindowHandle.HasValue && _previewCts is null;
+            _startPreviewButton.Enabled = _activeWindowHandle.HasValue && _previewCts is null;
         }
+    }
+
+    private async Task StartLivePreviewAsync()
+    {
+        if (_activeWindowHandle is not long hwnd || hwnd == 0)
+        {
+            MessageBox.Show(this, "No application window handle is available. Start an application and refresh status.",
+                "No preview target", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (_previewTask is { IsCompleted: false })
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _previewCts = cts;
+        _captureButton.Enabled = false;
+        _startPreviewButton.Enabled = false;
+        _stopPreviewButton.Enabled = true;
+
+        Log($"Starting continuous preview for HWND=0x{hwnd:X} (up to about 5 frames/second)...");
+        _previewTask = RunLivePreviewLoopAsync(hwnd, cts);
+    }
+
+    private async Task StopLivePreviewAsync()
+    {
+        var cts = _previewCts;
+        var task = _previewTask;
+
+        if (cts is null)
+        {
+            return;
+        }
+
+        Log("Stopping live preview...");
+        cts.Cancel();
+
+        if (task is not null)
+        {
+            try
+            {
+                await task;
+            }
+            catch (OperationCanceledException)
+            {
+                // The preview loop is expected to finish after cancellation.
+            }
+        }
+    }
+
+    private async Task RunLivePreviewLoopAsync(long hwnd, CancellationTokenSource cts)
+    {
+        var token = cts.Token;
+
+        try
+        {
+            await EnsureLivePreviewShellAsync(token);
+            Log("Live preview is running. The target window must remain open and unminimized.");
+
+            var consecutiveFailures = 0;
+            var minimizedMessageLogged = false;
+
+            while (!token.IsCancellationRequested)
+            {
+                token.ThrowIfCancellationRequested();
+
+                var target = new IntPtr(hwnd);
+                if (!IsWindow(target))
+                {
+                    Log("The target application window has closed. Live preview is stopping.");
+                    break;
+                }
+
+                if (IsIconic(target))
+                {
+                    if (!minimizedMessageLogged)
+                    {
+                        Log("Target window is minimized; preview is paused until it is restored.");
+                        minimizedMessageLogged = true;
+                    }
+
+                    await Task.Delay(MinimizedRetryDelay, token);
+                    continue;
+                }
+
+                try
+                {
+                    var jpegBytes = await WindowCaptureService.CaptureJpegAsync(hwnd, token);
+                    token.ThrowIfCancellationRequested();
+                    await UpdateLivePreviewFrameAsync(jpegBytes);
+                    consecutiveFailures = 0;
+                    minimizedMessageLogged = false;
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    consecutiveFailures++;
+                    Log($"Preview frame failed ({consecutiveFailures}/3): {ex.Message}");
+
+                    if (consecutiveFailures >= 3)
+                    {
+                        Log("Live preview stopped after three consecutive capture failures. Check that the target window is visible and available for capture.");
+                        break;
+                    }
+
+                    await Task.Delay(MinimizedRetryDelay, token);
+                }
+
+                await Task.Delay(PreviewFrameDelay, token);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // Normal Stop Preview path.
+        }
+        catch (Exception ex)
+        {
+            Log("Live preview stopped: " + ex.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(_previewCts, cts))
+            {
+                _previewCts = null;
+                _previewTask = null;
+                cts.Dispose();
+
+                if (!IsDisposed)
+                {
+                    _stopPreviewButton.Enabled = false;
+                    _startPreviewButton.Enabled = _activeWindowHandle.HasValue;
+                    _captureButton.Enabled = _activeWindowHandle.HasValue;
+                    Log("Live preview stopped.");
+                }
+            }
+            else
+            {
+                cts.Dispose();
+            }
+        }
+    }
+
+    private async Task EnsureLivePreviewShellAsync(CancellationToken cancellationToken)
+    {
+        if (!_webViewReady)
+        {
+            await _preview.EnsureCoreWebView2Async();
+            _webViewReady = true;
+        }
+
+        var core = _preview.CoreWebView2
+            ?? throw new InvalidOperationException("WebView2 is not ready.");
+
+        var navigation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<CoreWebView2NavigationCompletedEventArgs>? handler = null;
+        handler = (_, args) =>
+        {
+            core.NavigationCompleted -= handler;
+            if (args.IsSuccess)
+            {
+                navigation.TrySetResult(true);
+            }
+            else
+            {
+                navigation.TrySetException(new InvalidOperationException(
+                    $"WebView2 could not initialize the live preview surface (web error: {args.WebErrorStatus})."));
+            }
+        };
+
+        core.NavigationCompleted += handler;
+        try
+        {
+            _preview.NavigateToString("""
+                <!doctype html>
+                <html><head><meta charset="utf-8">
+                <style>
+                  html,body{height:100%;margin:0;background:#0a0f19;color:#cbd5e1;font:14px 'Segoe UI',sans-serif}
+                  body{display:grid;place-items:center;overflow:hidden}
+                  #live-frame{max-width:100%;max-height:100%;object-fit:contain}
+                  #hint{position:fixed;left:12px;bottom:10px;padding:6px 9px;background:#101827cc;border-radius:5px;color:#aab9cd}
+                </style></head>
+                <body><img id="live-frame" alt="Live application preview"><div id="hint">Waiting for first frame…</div></body></html>
+                """);
+
+            await navigation.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        }
+        finally
+        {
+            core.NavigationCompleted -= handler;
+        }
+    }
+
+    private async Task UpdateLivePreviewFrameAsync(byte[] jpegBytes)
+    {
+        var core = _preview.CoreWebView2
+            ?? throw new InvalidOperationException("WebView2 is not ready to display preview frames.");
+
+        var dataUri = "data:image/jpeg;base64," + Convert.ToBase64String(jpegBytes);
+        var encodedDataUri = JsonSerializer.Serialize(dataUri);
+        await core.ExecuteScriptAsync(
+            $"document.getElementById('live-frame').src = {encodedDataUri}; " +
+            "document.getElementById('hint').style.display = 'none';");
     }
 
     private async Task ShowCapturedImageAsync(byte[] jpegBytes)
@@ -411,7 +659,9 @@ internal sealed class MainForm : Form
         }
 
         // On a failed request without process details, retain the last known active window.
-        _captureButton.Enabled = _activeWindowHandle.HasValue;
+        _captureButton.Enabled = _activeWindowHandle.HasValue && _previewCts is null;
+        _startPreviewButton.Enabled = _activeWindowHandle.HasValue && _previewCts is null;
+        _stopPreviewButton.Enabled = _previewCts is not null;
     }
 
     private async Task RunCommandAsync(Func<Task> action)
@@ -438,7 +688,9 @@ internal sealed class MainForm : Form
     private void SetActionsEnabled(bool enabled)
     {
         _runButton.Enabled = enabled;
-        _captureButton.Enabled = enabled && _activeWindowHandle.HasValue;
+        _captureButton.Enabled = enabled && _activeWindowHandle.HasValue && _previewCts is null;
+        _startPreviewButton.Enabled = enabled && _activeWindowHandle.HasValue && _previewCts is null;
+        _stopPreviewButton.Enabled = _previewCts is not null;
     }
 
     private void ShowWelcomePage()
@@ -460,8 +712,8 @@ internal sealed class MainForm : Form
             </style></head>
             <body><main><h2>CloudRunner application preview</h2>
             <p>Start the dedicated capture test window, or provide a trusted GitHub Release EXE URL and SHA-256.</p>
-            <p>After the application opens, click <b>Capture application window</b>.</p>
-            <p>This is a single-window still preview. Continuous video streaming is a later milestone.</p>
+            <p>After the application opens, click <b>Capture application window</b> for one frame, or <b>Start live preview</b> for continuous local updates.</p>
+            <p>Live preview is currently capped at about 5 frames per second. Remote streaming is a separate milestone.</p>
             </main></body></html>
             """);
     }
@@ -494,6 +746,7 @@ internal sealed class MainForm : Form
 
         try
         {
+            await StopLivePreviewAsync();
             await _agent.DisposeAsync();
         }
         catch
