@@ -106,29 +106,33 @@ internal sealed class ExecutionSession : IAsyncDisposable
     }
 
 
-    public async Task<AgentResponse> StartNotepadAsync(CancellationToken cancellationToken)
+    public async Task<AgentResponse> StartTestWindowAsync(CancellationToken cancellationToken)
     {
         CleanupExitedProcess();
 
         if (_process is { HasExited: false })
         {
             return CurrentProcessResponse(
-                "An EXE is already running. Stop it before starting the Notepad test.",
+                "An application is already running. Stop it before starting the capture test.",
                 success: false);
         }
 
-        var notepadPath = Path.Combine(Environment.SystemDirectory, "notepad.exe");
-        if (!File.Exists(notepadPath))
+        EnsureStandardUserContext();
+
+        var testWindowPath = Path.Combine(AppContext.BaseDirectory, "CloudRunner.TestWindow.exe");
+        if (!File.Exists(testWindowPath))
         {
-            throw new FileNotFoundException("Windows Notepad was not found.", notepadPath);
+            throw new FileNotFoundException(
+                "The dedicated CloudRunner test window was not bundled beside HostAgent. Rebuild the complete solution.",
+                testWindowPath);
         }
 
         try
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = notepadPath,
-                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                FileName = testWindowPath,
+                WorkingDirectory = AppContext.BaseDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = false,
                 WindowStyle = ProcessWindowStyle.Normal
@@ -137,7 +141,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
             _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             if (!_process.Start())
             {
-                throw new InvalidOperationException("Windows did not start Notepad.");
+                throw new InvalidOperationException("Windows did not start the CloudRunner capture test window.");
             }
 
             _job = new KillOnCloseJob();
@@ -147,8 +151,8 @@ internal sealed class ExecutionSession : IAsyncDisposable
             return new AgentResponse(
                 true,
                 window.Handle == 0
-                    ? "Notepad started, but its top-level window is not ready yet. Refresh status."
-                    : "Notepad started. Its window is ready for a capture preview.",
+                    ? "The capture test process started, but its window is not ready. Refresh status."
+                    : "Dedicated CloudRunner test window started. Its HWND is ready for capture.",
                 _process.Id,
                 window.Handle,
                 window.Title);
