@@ -1,0 +1,38 @@
+name: Build CloudRunner WinForms
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore ./CloudRunner.WinForms/CloudRunner.WinForms.csproj
+
+      - name: Build Release
+        run: dotnet build ./CloudRunner.WinForms/CloudRunner.WinForms.csproj --configuration Release --no-restore
+
+      - name: Publish Release
+        run: dotnet publish ./CloudRunner.WinForms/CloudRunner.WinForms.csproj --configuration Release --no-restore --output ./artifacts/CloudRunner.WinForms
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudRunner-WinForms-${{ github.run_number }}
+          path: ./artifacts/CloudRunner.WinForms
+          if-no-files-found: error
+          retention-days: 3
