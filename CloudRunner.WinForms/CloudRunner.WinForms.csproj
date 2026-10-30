@@ -21,7 +21,7 @@
 
   <Target Name="CopyCloudRunnerHostAgentAfterBuild" AfterTargets="Build">
     <ItemGroup>
-      <_HostAgentBuildFiles Include="$(MSBuildProjectDirectory)/../CloudRunner.HostAgent/bin/$(Configuration)/net10.0-windows/*.*" />
+      <_HostAgentBuildFiles Include="$(MSBuildProjectDirectory)/../CloudRunner.HostAgent/bin/$(Configuration)/net10.0-windows10.0.19041.0/*.*" />
     </ItemGroup>
     <MakeDir Directories="$(TargetDir)Agent" />
     <Copy SourceFiles="@(_HostAgentBuildFiles)"
@@ -31,7 +31,7 @@
 
   <Target Name="CopyCloudRunnerHostAgentAfterPublish" AfterTargets="Publish">
     <ItemGroup>
-      <_HostAgentPublishFiles Include="$(MSBuildProjectDirectory)/../CloudRunner.HostAgent/bin/$(Configuration)/net10.0-windows/*.*" />
+      <_HostAgentPublishFiles Include="$(MSBuildProjectDirectory)/../CloudRunner.HostAgent/bin/$(Configuration)/net10.0-windows10.0.19041.0/*.*" />
     </ItemGroup>
     <MakeDir Directories="$(PublishDir)Agent" />
     <Copy SourceFiles="@(_HostAgentPublishFiles)"
