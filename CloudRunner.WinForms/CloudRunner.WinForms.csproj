@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -11,12 +11,32 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <PackageReference Include="WgcSharp" Version="1.1.1" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="../scripts/Setup-LocalStreaming.ps1"
-          Link="Setup-LocalStreaming.ps1"
-          CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="../CloudRunner.HostAgent/CloudRunner.HostAgent.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="CopyCloudRunnerHostAgentAfterBuild" AfterTargets="Build">
+    <ItemGroup>
+      <_HostAgentBuildFiles Include="$(MSBuildProjectDirectory)/../CloudRunner.HostAgent/bin/$(Configuration)/net10.0-windows/*.*" />
+    </ItemGroup>
+    <MakeDir Directories="$(TargetDir)Agent" />
+    <Copy SourceFiles="@(_HostAgentBuildFiles)"
+          DestinationFolder="$(TargetDir)Agent"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyCloudRunnerHostAgentAfterPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_HostAgentPublishFiles Include="$(MSBuildProjectDirectory)/../CloudRunner.HostAgent/bin/$(Configuration)/net10.0-windows/*.*" />
+    </ItemGroup>
+    <MakeDir Directories="$(PublishDir)Agent" />
+    <Copy SourceFiles="@(_HostAgentPublishFiles)"
+          DestinationFolder="$(PublishDir)Agent"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
