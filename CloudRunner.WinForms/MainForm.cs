@@ -90,46 +90,47 @@ internal sealed class MainForm : Form
         AddField(left, "Direct GitHub Release EXE URL", _urlInput, 42, 64);
 
         _shaInput.PlaceholderText = "64-character SHA-256";
-        AddField(left, "Expected SHA-256", _shaInput, 120, 54);
+        _shaInput.Height = 28;
+        AddField(left, "Expected SHA-256", _shaInput, 126, 148);
 
         _argumentsInput.Multiline = true;
         _argumentsInput.ScrollBars = ScrollBars.Vertical;
         _argumentsInput.PlaceholderText = "Optional arguments, e.g. --mode demo";
         _argumentsInput.Height = 54;
-        AddField(left, "Command-line arguments", _argumentsInput, 186, 64);
+        AddField(left, "Command-line arguments", _argumentsInput, 184, 206);
 
         _runButton.Text = "Download, verify and run EXE";
         StylePrimaryButton(_runButton);
-        _runButton.SetBounds(8, 260, 340, 42);
+        _runButton.SetBounds(8, 270, 340, 42);
         _runButton.Click += async (_, _) => await RunReleaseAsync();
         left.Controls.Add(_runButton);
 
-        var notepadButton = MakeButton("Start Notepad test", 312);
+        var notepadButton = MakeButton("Start Notepad test", 318);
         notepadButton.Click += async (_, _) => await StartNotepadAsync();
         left.Controls.Add(notepadButton);
 
         _captureButton.Text = "Capture application window";
-        _captureButton.SetBounds(8, 362, 340, 40);
+        _captureButton.SetBounds(8, 364, 340, 40);
         _captureButton.Enabled = false;
         StyleSecondaryButton(_captureButton);
         _captureButton.Click += async (_, _) => await CapturePreviewAsync();
         left.Controls.Add(_captureButton);
 
-        var refreshButton = MakeButton("Refresh process / window status", 408);
+        var refreshButton = MakeButton("Refresh process / window status", 410);
         refreshButton.Click += async (_, _) => await RefreshStatusAsync();
         left.Controls.Add(refreshButton);
 
-        var stopButton = MakeButton("Stop application", 454);
+        var stopButton = MakeButton("Stop application", 456);
         stopButton.Click += async (_, _) => await StopApplicationAsync();
         left.Controls.Add(stopButton);
 
-        _status.SetBounds(8, 514, 340, 44);
+        _status.SetBounds(8, 512, 340, 48);
         _status.Font = new Font("Segoe UI Semibold", 10F);
         _status.ForeColor = Color.Goldenrod;
         _status.Text = "HostAgent not started";
         left.Controls.Add(_status);
 
-        _windowInfo.SetBounds(8, 562, 340, 64);
+        _windowInfo.SetBounds(8, 568, 340, 64);
         _windowInfo.ForeColor = Color.FromArgb(190, 202, 220);
         _windowInfo.Text = "No application window selected.";
         left.Controls.Add(_windowInfo);
@@ -137,7 +138,7 @@ internal sealed class MainForm : Form
         var note = new Label
         {
             Left = 8,
-            Top = 638,
+            Top = 640,
             Width = 340,
             Height = 125,
             ForeColor = Color.FromArgb(170, 186, 205),
