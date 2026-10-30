@@ -406,18 +406,18 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task StartLivePreviewAsync()
+    private Task StartLivePreviewAsync()
     {
         if (_activeWindowHandle is not long hwnd || hwnd == 0)
         {
             MessageBox.Show(this, "No application window handle is available. Start an application and refresh status.",
                 "No preview target", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
+            return Task.CompletedTask;
         }
 
         if (_previewTask is { IsCompleted: false })
         {
-            return;
+            return Task.CompletedTask;
         }
 
         var cts = new CancellationTokenSource();
@@ -428,6 +428,7 @@ internal sealed class MainForm : Form
 
         Log($"Starting continuous preview for HWND=0x{hwnd:X} (up to about 5 frames/second)...");
         _previewTask = RunLivePreviewLoopAsync(hwnd, cts);
+        return Task.CompletedTask;
     }
 
     private async Task StopLivePreviewAsync()
