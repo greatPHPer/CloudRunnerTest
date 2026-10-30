@@ -2,7 +2,7 @@
 
 CloudRunner is a zero-hosting-cost Windows application runner. Each user runs applications on their own Windows PC; CloudRunner does not provide a centrally hosted Windows desktop.
 
-## Current Phase 1 implementation
+## Current implementation (local execution + continuous preview)
 
 - **Controller:** C# WinForms + WebView2.
 - **Local execution agent:** separate, hidden WinExe running under the signed-in Windows user.
@@ -11,6 +11,7 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - **Download checks:** approved HTTPS GitHub release redirect hosts, 100 MB maximum, MZ header check and SHA-256 verification.
 - **Process lifecycle:** one application at a time, individual command-line arguments, Windows Job Object ownership with kill-on-close, stop the managed process tree and remove its temporary job directory.
 - **Window preview:** WgcSharp using Windows Graphics Capture first, with DXGI Desktop Duplication fallback, targeting the launched process's top-level HWND.
+- **Continuous preview:** sequential local frame capture, rendered in WebView2 without navigating/reloading the page for each frame; currently capped at about 5 frames per second.
 - **Cloud compute:** none.
 - **Remote video streaming:** not implemented yet.
 - **Remote pairing/signalling:** not implemented yet.
@@ -66,9 +67,10 @@ The workflow uploads a short-retention build artifact.
 
 1. Click **Start capture test window**.
 2. Wait for the dedicated CloudRunner WinForms test process ID and window handle to appear.
-3. Click **Capture application window**.
-4. Confirm the preview shows the dedicated test window rather than the entire desktop.
-5. Click **Stop application**.
+3. Click **Capture application window** to verify a one-frame capture.
+4. Click **Start live preview** and confirm that the test window's clock/counter keeps updating in WebView2.
+5. Minimize the test window and verify that preview pauses; restore it and verify that preview resumes.
+6. Click **Stop live preview**, then **Stop application**.
 
 The test uses a small WinForms application shipped beside HostAgent. It deliberately does not use the modern Windows Notepad launcher: on some Windows 11 installations, `notepad.exe` hands the activation to the packaged Notepad app and exits with code 0, so its original process is not the window-owning process we need to capture.
 
@@ -101,9 +103,11 @@ The current implementation does not provide a hardened sandbox, per-app restrict
 
 ## Window-capture notes
 
-The preview requests the selected application HWND rather than the whole monitor. WgcSharp tries Windows Graphics Capture first and falls back to DXGI Desktop Duplication if WGC fails on the current device or window. The DXGI fallback captures the visible desktop output and crops it to the window bounds, so the target window must be visible and not minimized. The capture service produces a JPEG still preview on demand.
+The preview requests the selected application HWND rather than the whole monitor. WgcSharp tries Windows Graphics Capture first and falls back to DXGI Desktop Duplication if WGC fails on the current device or window. The DXGI fallback captures the visible desktop output and crops it to the window bounds, so the target window must be visible and not minimized. Windows Graphics Capture can capture a window even when another window overlaps it; the DXGI fallback depends on the target being visible in the captured desktop output.
 
-This phase does **not** yet provide continuous 30-FPS streaming, remote mouse/keyboard control, peer-to-peer WebRTC, or a public session pairing service. Those are separate milestones.
+The live-preview loop captures one frame at a time (no overlapping capture tasks), waits about 200 ms between successful frames, and updates the existing WebView2 image element. This is a local preview, currently limited to approximately 5 FPS; it is not a 30-FPS or network video stream. If the target is minimized, the loop pauses and retries when it is restored. If the target closes, or three consecutive capture attempts fail, preview stops. Stopping the application or closing CloudRunner also stops the preview loop.
+
+This phase does **not** yet provide remote mouse/keyboard control, peer-to-peer WebRTC, or a public session pairing service. Those remain separate milestones.
 
 Minimized or closed windows may not yield a frame. Some applications use multiple processes or child windows; the current HostAgent reports the launched process's main top-level window only.
 
@@ -121,8 +125,8 @@ The later optional remote collaboration feature will use direct WebRTC peer-to-p
 
 ## Development roadmap
 
-1. **Phase 1:** local HostAgent, verified download, process lifecycle and one-window preview.
-2. **Phase 2:** continuous window-frame capture and local rendering without VNC.
+1. **Phase 1:** local HostAgent, verified download and process lifecycle.
+2. **Phase 2:** continuous local window-frame capture and WebView2 rendering (initial implementation is present; performance and compatibility testing remain).
 3. **Phase 3:** WebRTC peer-to-peer video and input with explicit host consent.
 4. **Phase 4:** free-tier signalling/pairing, quotas and abuse controls.
 5. **Phase 5:** review hardening, installer, public documentation and publisher trust/safety workflow.
