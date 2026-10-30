@@ -321,7 +321,7 @@ internal sealed class MainForm : Form
         _captureButton.Enabled = false;
         try
         {
-            Log($"Capturing application window HWND=0x{hwnd:X} using Windows Graphics Capture...");
+            Log($"Capturing application window HWND=0x{hwnd:X} (WGC with DXGI fallback)...");
             var jpegBytes = await WindowCaptureService.CaptureJpegAsync(hwnd);
             await ShowCapturedImageAsync(jpegBytes);
             Log($"Window preview captured ({jpegBytes.Length:N0} JPEG bytes).");
