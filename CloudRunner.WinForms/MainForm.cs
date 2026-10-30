@@ -105,9 +105,9 @@ internal sealed class MainForm : Form
         _runButton.Click += async (_, _) => await RunReleaseAsync();
         left.Controls.Add(_runButton);
 
-        var notepadButton = MakeButton("Start Notepad test", 318);
-        notepadButton.Click += async (_, _) => await StartNotepadAsync();
-        left.Controls.Add(notepadButton);
+        var testWindowButton = MakeButton("Start capture test window", 318);
+        testWindowButton.Click += async (_, _) => await StartTestWindowAsync();
+        left.Controls.Add(testWindowButton);
 
         _captureButton.Text = "Capture application window";
         _captureButton.SetBounds(8, 364, 340, 40);
@@ -276,12 +276,12 @@ internal sealed class MainForm : Form
         });
     }
 
-    private async Task StartNotepadAsync()
+    private async Task StartTestWindowAsync()
     {
         await RunCommandAsync(async () =>
         {
-            Log("Starting the built-in Notepad test window through HostAgent...");
-            var response = await _agent.SendAsync(new AgentCommand("start-notepad"));
+            Log("Starting the dedicated CloudRunner WinForms capture test window through HostAgent...");
+            var response = await _agent.SendAsync(new AgentCommand("start-test-window"));
             ApplyAgentResponse(response);
         });
     }
@@ -432,7 +432,7 @@ internal sealed class MainForm : Form
               code{color:#93c5fd}
             </style></head>
             <body><main><h2>CloudRunner application preview</h2>
-            <p>Start Notepad for a quick local test, or provide a trusted GitHub Release EXE URL and SHA-256.</p>
+            <p>Start the dedicated capture test window, or provide a trusted GitHub Release EXE URL and SHA-256.</p>
             <p>After the application opens, click <b>Capture application window</b>.</p>
             <p>This is a single-window still preview. Continuous video streaming is a later milestone.</p>
             </main></body></html>
