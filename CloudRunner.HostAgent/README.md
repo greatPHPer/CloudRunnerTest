@@ -19,5 +19,6 @@ A per-user local process manager for CloudRunner. It is started by the WinForms 
 - The agent refuses to launch the downloaded application when the agent itself is elevated as Administrator.
 - Named-pipe access is restricted with `PipeOptions.CurrentUserOnly`.
 - Only one managed application session is permitted at a time.
+- The launched process is assigned to a Windows Job Object with kill-on-close enabled, so the operating system terminates assigned processes if the HostAgent exits unexpectedly.
 
 This is process hygiene, not a security sandbox. Downloaded code runs with the current user's permissions and may access that user's files, credentials, network and other resources. Do not run untrusted executables. A later public product needs additional isolation and a clear trust/consent model.
