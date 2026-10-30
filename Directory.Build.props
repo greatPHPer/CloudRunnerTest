@@ -1,0 +1,10 @@
+<Project>
+  <!-- Keep CloudRunner build outputs beside each project.
+       This repository-level file takes precedence over machine-wide
+       E:\Directory.Build.props settings on Windows development machines. -->
+  <PropertyGroup Condition="'$(OS)' == 'Windows_NT'">
+    <BaseOutputPath>$(MSBuildProjectDirectory)\bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildProjectDirectory)\obj\</BaseIntermediateOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>
