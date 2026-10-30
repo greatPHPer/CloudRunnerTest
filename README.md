@@ -10,7 +10,7 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - **Release input:** direct HTTPS GitHub Release `.exe` URL plus expected SHA-256.
 - **Download checks:** approved HTTPS GitHub release redirect hosts, 100 MB maximum, MZ header check and SHA-256 verification.
 - **Process lifecycle:** one application at a time, individual command-line arguments, Windows Job Object ownership with kill-on-close, stop the managed process tree and remove its temporary job directory.
-- **Window preview:** WgcSharp / Windows Graphics Capture, targeting the launched process's top-level HWND.
+- **Window preview:** WgcSharp using Windows Graphics Capture first, with DXGI Desktop Duplication fallback, targeting the launched process's top-level HWND.
 - **Cloud compute:** none.
 - **Remote video streaming:** not implemented yet.
 - **Remote pairing/signalling:** not implemented yet.
@@ -101,7 +101,7 @@ The current implementation does not provide a hardened sandbox, per-app restrict
 
 ## Window-capture notes
 
-The preview uses Windows Graphics Capture and requests the selected application HWND rather than the whole monitor. Microsoft documents the HWND-based capture interop from Windows 10 build 18362. The capture service currently produces a JPEG still preview on demand.
+The preview requests the selected application HWND rather than the whole monitor. WgcSharp tries Windows Graphics Capture first and falls back to DXGI Desktop Duplication if WGC fails on the current device or window. The DXGI fallback captures the visible desktop output and crops it to the window bounds, so the target window must be visible and not minimized. The capture service produces a JPEG still preview on demand.
 
 This phase does **not** yet provide continuous 30-FPS streaming, remote mouse/keyboard control, peer-to-peer WebRTC, or a public session pairing service. Those are separate milestones.
 
