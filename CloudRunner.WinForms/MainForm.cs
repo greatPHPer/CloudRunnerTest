@@ -127,8 +127,9 @@ internal sealed class MainForm : Form
             Text = "Before connecting:\r\n" +
                    "1. Install TightVNC 4.\r\n" +
                    "2. Start its Server in application mode.\r\n" +
-                   "3. Set a VNC password.\r\n" +
-                   "4. Restrict access to loopback only.\r\n\r\n" +
+                   "3. Select classical/legacy VNC authentication for noVNC compatibility (TightVNC 4 SRP-6a is not listed as supported by noVNC).\r\n" +
+                   "4. Set a VNC password (classical VNC authentication has an 8-character limit).\r\n" +
+                   "5. Restrict access to loopback only.\r\n\r\n" +
                    "CloudRunner does not verify the VNC access-control setting yet.\r\n\r\n" +
                    "Same-PC note: whole-desktop capture can mirror this viewer. Clean app-only capture is a later milestone.\r\n\r\n" +
                    "No VNC password is stored in the viewer URL."
