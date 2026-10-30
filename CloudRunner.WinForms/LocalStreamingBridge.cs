@@ -30,6 +30,8 @@ internal sealed class LocalStreamingBridge : IDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
+        Stop();
+
         if (!ToolsInstalled)
         {
             throw new InvalidOperationException(
@@ -48,8 +50,6 @@ internal sealed class LocalStreamingBridge : IDisposable
             throw new InvalidOperationException(
                 "Port 6080 is already in use. Stop the other websockify/noVNC instance before continuing.");
         }
-
-        Stop();
 
         var startInfo = new ProcessStartInfo
         {
