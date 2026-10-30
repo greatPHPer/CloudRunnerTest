@@ -14,10 +14,10 @@ internal static class WindowCaptureService
             throw new ArgumentOutOfRangeException(nameof(windowHandle), "A valid application window handle is required.");
         }
 
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 18362))
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
         {
             throw new PlatformNotSupportedException(
-                "Application-window capture requires Windows 10 version 1903 (build 18362) or later.");
+                "This CloudRunner build requires Windows 10 version 2004 (build 19041) or later for its selected capture dependency.");
         }
 
         return Task.Run(() =>
