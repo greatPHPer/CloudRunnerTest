@@ -64,11 +64,13 @@ The workflow uploads a short-retention build artifact.
 
     dotnet run --project .\CloudRunner.WinForms\CloudRunner.WinForms.csproj
 
-1. Click **Start Notepad test**.
-2. Wait for the process ID and window handle to appear.
+1. Click **Start capture test window**.
+2. Wait for the dedicated CloudRunner WinForms test process ID and window handle to appear.
 3. Click **Capture application window**.
-4. Confirm the preview shows the Notepad window rather than the entire desktop.
+4. Confirm the preview shows the dedicated test window rather than the entire desktop.
 5. Click **Stop application**.
+
+The test uses a small WinForms application shipped beside HostAgent. It deliberately does not use the modern Windows Notepad launcher: on some Windows 11 installations, `notepad.exe` hands the activation to the packaged Notepad app and exits with code 0, so its original process is not the window-owning process we need to capture.
 
 For a release EXE:
 
@@ -90,6 +92,7 @@ CloudRunner is a launcher, not a malware sandbox.
 - Downloaded executables are not launched with elevation; the agent refuses to run them when it detects an elevated Administrator token.
 - The agent restricts its named pipe to the current Windows user.
 - The launched process is assigned to a Windows Job Object configured to terminate assigned processes when the HostAgent exits.
+- The capture test uses a bundled, standalone WinForms window so the reported process owns the HWND; it does not depend on the Windows Notepad launcher.
 - Only one managed process is supported in this phase.
 
 **A matching SHA-256 proves file integrity against the checksum supplied by the user; it does not prove that the software is safe.** Run only software from publishers you trust. A standard Windows user token still has access to that user's data and credentials.
