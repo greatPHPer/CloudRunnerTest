@@ -374,13 +374,15 @@ internal sealed class MainForm : Form
             _windowInfo.Text = $"Process ID: {processId}\r\n" +
                                $"Window: {windowTitle}\r\n" +
                                $"HWND: {windowHandleText}";
+            _activeWindowHandle = response.WindowHandle is > 0 ? response.WindowHandle : null;
         }
-        else
+        else if (response.Success)
         {
             _windowInfo.Text = "No application window selected.";
+            _activeWindowHandle = null;
         }
 
-        _activeWindowHandle = response.WindowHandle is > 0 ? response.WindowHandle : null;
+        // On a failed request without process details, retain the last known active window.
         _captureButton.Enabled = _activeWindowHandle.HasValue;
     }
 
