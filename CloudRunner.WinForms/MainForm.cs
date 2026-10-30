@@ -122,13 +122,15 @@ internal sealed class MainForm : Form
             Left = 8,
             Top = 540,
             Width = 260,
-            Height = 145,
+            Height = 205,
             ForeColor = Color.FromArgb(185, 198, 215),
             Text = "Before connecting:\r\n" +
                    "1. Install TightVNC 4.\r\n" +
                    "2. Start its Server in application mode.\r\n" +
                    "3. Set a VNC password.\r\n" +
                    "4. Restrict access to loopback only.\r\n\r\n" +
+                   "CloudRunner does not verify the VNC access-control setting yet.\r\n\r\n" +
+                   "Same-PC note: whole-desktop capture can mirror this viewer. Clean app-only capture is a later milestone.\r\n\r\n" +
                    "No VNC password is stored in the viewer URL."
         };
         left.Controls.Add(note);
