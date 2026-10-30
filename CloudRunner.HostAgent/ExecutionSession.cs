@@ -99,6 +99,50 @@ internal sealed class ExecutionSession : IAsyncDisposable
         }
     }
 
+
+    public async Task<AgentResponse> StartNotepadAsync(CancellationToken cancellationToken)
+    {
+        CleanupExitedProcess();
+
+        if (_process is { HasExited: false })
+        {
+            return CurrentProcessResponse("An EXE is already running. Stop it before starting the Notepad test.");
+        }
+
+        var notepadPath = Path.Combine(Environment.SystemDirectory, "notepad.exe");
+        if (!File.Exists(notepadPath))
+        {
+            throw new FileNotFoundException("Windows Notepad was not found.", notepadPath);
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = notepadPath,
+            WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            UseShellExecute = false,
+            CreateNoWindow = false,
+            WindowStyle = ProcessWindowStyle.Normal
+        };
+
+        _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        if (!_process.Start())
+        {
+            _process.Dispose();
+            _process = null;
+            throw new InvalidOperationException("Windows did not start Notepad.");
+        }
+
+        var window = await WaitForMainWindowAsync(_process, cancellationToken);
+        return new AgentResponse(
+            true,
+            window.Handle == 0
+                ? "Notepad started, but its top-level window is not ready yet. Refresh status."
+                : "Notepad started. Its window is ready for a capture preview.",
+            _process.Id,
+            window.Handle,
+            window.Title);
+    }
+
     public AgentResponse GetStatus()
     {
         CleanupExitedProcess();
