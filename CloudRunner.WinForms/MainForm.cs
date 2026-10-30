@@ -366,9 +366,14 @@ internal sealed class MainForm : Form
 
         if (response.ProcessId is int processId)
         {
+            var windowTitle = response.WindowTitle ?? "(title not available)";
+            var windowHandleText = response.WindowHandle is long hwnd && hwnd != 0
+                ? $"0x{hwnd:X}"
+                : "(not ready)";
+
             _windowInfo.Text = $"Process ID: {processId}\r\n" +
-                               $"Window: {response.WindowTitle ?? "(title not available)"}\r\n" +
-                               $"HWND: {(response.WindowHandle is long hwnd && hwnd != 0 ? $"0x{hwnd:X}" : "(not ready)")}";
+                               $"Window: {windowTitle}\r\n" +
+                               $"HWND: {windowHandleText}";
         }
         else
         {
