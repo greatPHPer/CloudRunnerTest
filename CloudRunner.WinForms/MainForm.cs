@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.Web.WebView2.WinForms;
 
 namespace CloudRunner.WinForms;
@@ -16,6 +17,14 @@ internal sealed class MainForm : Form
     private readonly Button _captureButton = new();
 
     private long? _activeWindowHandle;
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private const int SwRestore = 9;
     private bool _webViewReady;
     private bool _shutdownInProgress;
     private bool _allowClose;
@@ -319,10 +328,23 @@ internal sealed class MainForm : Form
         }
 
         _captureButton.Enabled = false;
+        var previousWindowState = WindowState;
         try
         {
             Log($"Capturing application window HWND=0x{hwnd:X} (WGC with DXGI fallback)...");
+            // DXGI fallback captures the visible desktop and crops to the target.
+            // Minimize this controller and foreground the target so the fallback
+            // does not accidentally capture CloudRunner over the application.
+            WindowState = FormWindowState.Minimized;
+            await Task.Delay(250);
+            ShowWindowAsync(new IntPtr(hwnd), SwRestore);
+            SetForegroundWindow(new IntPtr(hwnd));
+            await Task.Delay(250);
+
             var jpegBytes = await WindowCaptureService.CaptureJpegAsync(hwnd);
+            WindowState = previousWindowState;
+            Activate();
+
             await ShowCapturedImageAsync(jpegBytes);
             Log($"Window preview captured ({jpegBytes.Length:N0} JPEG bytes).");
         }
@@ -333,6 +355,12 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            if (WindowState == FormWindowState.Minimized && previousWindowState != FormWindowState.Minimized)
+            {
+                WindowState = previousWindowState;
+                Activate();
+            }
+
             _captureButton.Enabled = _activeWindowHandle.HasValue;
         }
     }
