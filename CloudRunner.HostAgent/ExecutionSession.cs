@@ -11,6 +11,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
         "CloudRunner", "Jobs");
 
     private Process? _process;
+    private KillOnCloseJob? _job;
     private string? _jobDirectory;
 
     public async Task<AgentResponse> StartAsync(
@@ -60,6 +61,9 @@ internal sealed class ExecutionSession : IAsyncDisposable
                 throw new InvalidOperationException("Windows did not start the downloaded application.");
             }
 
+            _job = new KillOnCloseJob();
+            _job.Assign(_process);
+
             var window = await WaitForMainWindowAsync(_process, cancellationToken);
 
             var message = window.Handle == 0
@@ -94,6 +98,8 @@ internal sealed class ExecutionSession : IAsyncDisposable
                 _process = null;
             }
 
+            _job?.Dispose();
+            _job = null;
             DeleteJobDirectory();
             throw;
         }
@@ -106,7 +112,9 @@ internal sealed class ExecutionSession : IAsyncDisposable
 
         if (_process is { HasExited: false })
         {
-            return CurrentProcessResponse("An EXE is already running. Stop it before starting the Notepad test.", success: false);
+            return CurrentProcessResponse(
+                "An EXE is already running. Stop it before starting the Notepad test.",
+                success: false);
         }
 
         var notepadPath = Path.Combine(Environment.SystemDirectory, "notepad.exe");
@@ -115,32 +123,61 @@ internal sealed class ExecutionSession : IAsyncDisposable
             throw new FileNotFoundException("Windows Notepad was not found.", notepadPath);
         }
 
-        var startInfo = new ProcessStartInfo
+        try
         {
-            FileName = notepadPath,
-            WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            UseShellExecute = false,
-            CreateNoWindow = false,
-            WindowStyle = ProcessWindowStyle.Normal
-        };
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = notepadPath,
+                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                UseShellExecute = false,
+                CreateNoWindow = false,
+                WindowStyle = ProcessWindowStyle.Normal
+            };
 
-        _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        if (!_process.Start())
-        {
-            _process.Dispose();
-            _process = null;
-            throw new InvalidOperationException("Windows did not start Notepad.");
+            _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            if (!_process.Start())
+            {
+                throw new InvalidOperationException("Windows did not start Notepad.");
+            }
+
+            _job = new KillOnCloseJob();
+            _job.Assign(_process);
+
+            var window = await WaitForMainWindowAsync(_process, cancellationToken);
+            return new AgentResponse(
+                true,
+                window.Handle == 0
+                    ? "Notepad started, but its top-level window is not ready yet. Refresh status."
+                    : "Notepad started. Its window is ready for a capture preview.",
+                _process.Id,
+                window.Handle,
+                window.Title);
         }
+        catch
+        {
+            if (_process is not null)
+            {
+                try
+                {
+                    if (!_process.HasExited)
+                    {
+                        _process.Kill(entireProcessTree: true);
+                        await _process.WaitForExitAsync(CancellationToken.None);
+                    }
+                }
+                catch
+                {
+                    // Preserve the original startup error.
+                }
 
-        var window = await WaitForMainWindowAsync(_process, cancellationToken);
-        return new AgentResponse(
-            true,
-            window.Handle == 0
-                ? "Notepad started, but its top-level window is not ready yet. Refresh status."
-                : "Notepad started. Its window is ready for a capture preview.",
-            _process.Id,
-            window.Handle,
-            window.Title);
+                _process.Dispose();
+                _process = null;
+            }
+
+            _job?.Dispose();
+            _job = null;
+            throw;
+        }
     }
 
     public AgentResponse GetStatus()
@@ -159,6 +196,8 @@ internal sealed class ExecutionSession : IAsyncDisposable
     {
         if (_process is null)
         {
+            _job?.Dispose();
+            _job = null;
             DeleteJobDirectory();
             return new AgentResponse(true, "No application was running. Temporary job folder cleanup was attempted.");
         }
@@ -190,6 +229,8 @@ internal sealed class ExecutionSession : IAsyncDisposable
         {
             process.Dispose();
             _process = null;
+            _job?.Dispose();
+            _job = null;
             DeleteJobDirectory();
         }
     }
@@ -265,6 +306,8 @@ internal sealed class ExecutionSession : IAsyncDisposable
 
         _process.Dispose();
         _process = null;
+        _job?.Dispose();
+        _job = null;
         DeleteJobDirectory();
     }
 
