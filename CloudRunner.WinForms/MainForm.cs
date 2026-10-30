@@ -335,10 +335,10 @@ internal sealed class MainForm : Form
             // DXGI fallback captures the visible desktop and crops to the target.
             // Minimize this controller and foreground the target so the fallback
             // does not accidentally capture CloudRunner over the application.
-            WindowState = FormWindowState.Minimized;
-            await Task.Delay(250);
             ShowWindowAsync(new IntPtr(hwnd), SwRestore);
             SetForegroundWindow(new IntPtr(hwnd));
+            await Task.Delay(200);
+            WindowState = FormWindowState.Minimized;
             await Task.Delay(250);
 
             var jpegBytes = await WindowCaptureService.CaptureJpegAsync(hwnd);
