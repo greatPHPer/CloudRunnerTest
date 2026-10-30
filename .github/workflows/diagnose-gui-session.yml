@@ -1,0 +1,107 @@
+name: Diagnose Windows GUI Session
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  diagnose:
+    name: Inspect hosted Windows desktop availability
+    runs-on: windows-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Inspect runner session and test a WinForms-compatible window
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportPath = Join-Path $env:RUNNER_TEMP 'cloudrunner-gui-session-diagnostic.txt'
+          $report = [System.Collections.Generic.List[string]]::new()
+
+          function Add-ReportLine([string]$Text) {
+            $report.Add($Text)
+            Write-Host $Text
+          }
+
+          Add-ReportLine 'CloudRunner GUI session diagnostic'
+          Add-ReportLine "UTC: $([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))"
+          Add-ReportLine "Identity: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+          Add-ReportLine "SESSIONNAME: $env:SESSIONNAME"
+          Add-ReportLine "Current process session ID: $((Get-Process -Id $PID).SessionId)"
+          Add-ReportLine "Environment.UserInteractive: $([Environment]::UserInteractive)"
+          Add-ReportLine ''
+
+          Add-ReportLine '--- query session ---'
+          try {
+            $sessionOutput = & "$env:SystemRoot\System32\query.exe" session 2>&1
+            foreach ($line in $sessionOutput) { Add-ReportLine ([string]$line) }
+          }
+          catch {
+            Add-ReportLine "query session failed: $($_.Exception.Message)"
+          }
+
+          Add-ReportLine ''
+          Add-ReportLine '--- Explorer processes ---'
+          $explorers = @(Get-Process -Name explorer -ErrorAction SilentlyContinue)
+          if ($explorers.Count -eq 0) {
+            Add-ReportLine 'No explorer.exe process is visible to this job.'
+          }
+          else {
+            foreach ($explorer in $explorers) {
+              Add-ReportLine "explorer PID=$($explorer.Id) SessionId=$($explorer.SessionId) Title=$($explorer.MainWindowTitle)"
+            }
+          }
+
+          Add-ReportLine ''
+          Add-ReportLine '--- Start a harmless Notepad GUI probe ---'
+          $notepad = $null
+          try {
+            $notepad = Start-Process -FilePath "$env:SystemRoot\System32\notepad.exe" -PassThru
+            Start-Sleep -Seconds 3
+            $notepad.Refresh()
+            Add-ReportLine "Notepad PID=$($notepad.Id)"
+            Add-ReportLine "Notepad SessionId=$($notepad.SessionId)"
+            Add-ReportLine "Notepad HasExited=$($notepad.HasExited)"
+            Add-ReportLine "Notepad MainWindowHandle=$($notepad.MainWindowHandle)"
+            Add-ReportLine "Notepad MainWindowTitle=$($notepad.MainWindowTitle)"
+          }
+          catch {
+            Add-ReportLine "Notepad probe failed: $($_.Exception.Message)"
+          }
+          finally {
+            if ($notepad) {
+              try { if (-not $notepad.HasExited) { Stop-Process -Id $notepad.Id -Force -ErrorAction SilentlyContinue } } catch {}
+            }
+          }
+
+          Add-ReportLine ''
+          Add-ReportLine '--- Initial assessment ---'
+          $sessionId = (Get-Process -Id $PID).SessionId
+          $sameSessionExplorer = @($explorers | Where-Object { $_.SessionId -eq $sessionId }).Count -gt 0
+          if ($sessionId -eq 0 -or -not [Environment]::UserInteractive -or -not $sameSessionExplorer) {
+            Add-ReportLine 'ASSESSMENT: This job does not appear to have an interactive user desktop.'
+            Add-ReportLine 'A process may run, but a live desktop viewer is likely to show no usable user session.'
+          }
+          else {
+            Add-ReportLine 'ASSESSMENT: An interactive desktop may be available.'
+            Add-ReportLine 'This is a promising signal only; VNC/WebSocket screen capture still needs a separate end-to-end test.'
+          }
+
+          $report | Set-Content -LiteralPath $reportPath -Encoding utf8
+          @(
+            '## CloudRunner GUI session diagnostic'
+            ''
+            'This workflow checks the Windows runner session before any remote-desktop server or public tunnel is introduced.'
+            ''
+            'The full diagnostic is attached as an artifact.'
+          ) | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudrunner-gui-session-diagnostic-${{ github.run_number }}
+          path: ${{ runner.temp }}/cloudrunner-gui-session-diagnostic.txt
+          if-no-files-found: warn
+          retention-days: 3
