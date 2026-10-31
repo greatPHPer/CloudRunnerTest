@@ -18,6 +18,7 @@
     textarea{width:100%;min-height:130px;resize:vertical;background:#07111f;color:#dbeafe;border:1px solid #3b4d67;border-radius:7px;padding:10px;font:11px Consolas,monospace}
     button{width:100%;margin:5px 0;padding:10px 12px;border:0;border-radius:7px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}
     button.secondary{background:#34465f}
+    button.awake{background:#166534}
     button.danger{background:#7f1d1d}
     button:disabled{opacity:.5;cursor:not-allowed}
     #status{padding:10px;border-radius:7px;min-height:42px;background:#071424;color:#a7f3d0;overflow-wrap:anywhere}
@@ -36,8 +37,9 @@
     <p id="status" role="status">Waiting for a host offer.</p>
     <pre id="diagnostics" aria-live="polite">ICE diagnostics will appear after connection starts.</pre>
     <button id="copy-diagnostics" class="secondary">Copy ICE diagnostics</button>
+    <button id="keep-awake" class="awake">Keep screen awake</button>
     <button id="disconnect" class="danger" disabled>Disconnect</button>
-    <p class="steps">Video is sent peer-to-peer when the network allows it. This prototype uses STUN only; some networks require a TURN relay and may not connect.</p>
+    <p class="steps">On Android, tap “Keep screen awake” while this page is open to reduce screen-timeout interruptions. Keep Chrome in the foreground during the test. Video is sent peer-to-peer; some networks may still need a TURN relay.</p>
   </section>
   <section class="connect">
     <h2>Connect to a host</h2>
@@ -64,6 +66,9 @@
   let peerConnection = null;
   let statsTimer = null;
   let receivedVideoTrack = null;
+  let screenWakeLock = null;
+  let keepAwakeRequested = false;
+  const keepAwakeButton = document.getElementById('keep-awake');
 
   function setStatus(message) {
     status.textContent = message;
@@ -202,6 +207,41 @@
     });
   }
 
+  async function releaseScreenWakeLock() {
+    keepAwakeRequested = false;
+    if (screenWakeLock) {
+      const lock = screenWakeLock;
+      screenWakeLock = null;
+      try {
+        await lock.release();
+      } catch {
+        // The lock may already have been released by the browser.
+      }
+    }
+    keepAwakeButton.textContent = 'Keep screen awake';
+  }
+
+  async function requestScreenWakeLock() {
+    if (!('wakeLock' in navigator)) {
+      setStatus('Screen Wake Lock is not supported by this browser.');
+      return;
+    }
+
+    try {
+      screenWakeLock = await navigator.wakeLock.request('screen');
+      keepAwakeRequested = true;
+      keepAwakeButton.textContent = 'Screen awake · tap to release';
+      screenWakeLock.addEventListener('release', () => {
+        if (screenWakeLock) screenWakeLock = null;
+        keepAwakeButton.textContent = 'Keep screen awake';
+      }, { once: true });
+      setStatus('Screen wake lock active. Keep this viewer tab in the foreground.');
+    } catch (error) {
+      keepAwakeRequested = false;
+      setStatus('Could not keep the screen awake: ' + (error?.message || String(error)));
+    }
+  }
+
   function disconnect() {
     if (statsTimer) {
       clearInterval(statsTimer);
@@ -291,6 +331,9 @@
           setStatus('Viewer page visibility: ' + document.visibilityState);
           void updateIceDiagnostics(pc);
         }
+        if (document.visibilityState === 'visible' && keepAwakeRequested && !screenWakeLock) {
+          void requestScreenWakeLock();
+        }
       });
       startStatsMonitoring(pc);
 
@@ -336,6 +379,14 @@
     answerBox.focus();
     answerBox.select();
     setStatus('Answer selected. Press Ctrl+C to copy it.');
+  });
+
+  keepAwakeButton.addEventListener('click', () => {
+    if (screenWakeLock) {
+      void releaseScreenWakeLock();
+    } else {
+      void requestScreenWakeLock();
+    }
   });
 
   document.getElementById('copy-diagnostics').addEventListener('click', async () => {
