@@ -708,7 +708,11 @@ internal sealed class MainForm : Form
                         image.src = dataUri;
                       };
 
-                      window.cloudRunnerClosePeer = closePeerConnection;
+                      window.cloudRunnerClosePeer = () => {
+                        closePeerConnection();
+                        offerBox.value = '';
+                        answerBox.value = '';
+                      };
 
                       createButton.addEventListener('click', async () => {
                         createButton.disabled = true;
