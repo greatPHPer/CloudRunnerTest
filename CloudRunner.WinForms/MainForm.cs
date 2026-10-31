@@ -711,8 +711,8 @@ internal sealed class MainForm : Form
                               ', bytesSent=' + (pair?.bytesSent ?? '?') +
                               ', bytesReceived=' + (pair?.bytesReceived ?? '?')
                           ];
-                          const existing = diagnostics.value.split('\\n').filter(Boolean);
-                          diagnostics.value = [...existing, ...lines].slice(-80).join('\\n');
+                          const existing = diagnostics.value.split('\n').filter(Boolean);
+                          diagnostics.value = [...existing, ...lines].slice(-80).join('\n');
                         } catch (error) {
                           const existing = diagnostics.value.split('\\n').filter(Boolean);
                           existing.push('[' + new Date().toLocaleTimeString() + '] Stats error: ' +
