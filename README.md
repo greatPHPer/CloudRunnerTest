@@ -134,6 +134,14 @@ The exchange is deliberately manual in this prototype; there is no signalling se
 
 GitHub Pages is only used to serve the static viewer HTML. It does not carry the video. The workflow is manual so the first deployment is not attempted until Pages has been enabled in repository settings.
 
+### Mobile viewing diagnostics
+
+The browser viewer now samples WebRTC statistics every 2.5 seconds. It reports received and decoded video frames, bytes received, packet loss, video element playback state, page visibility, and selected candidate-pair byte counters. The host preview similarly reports encoded/sent frames and outbound bytes. The reports omit IP addresses.
+
+On Android, use **Keep screen awake** during a viewing test and keep Chrome in the foreground. The Screen Wake Lock is optional, requires a user tap, and is released when the viewer disconnects. If the phone locks or Chrome is backgrounded, page visibility diagnostics help identify that transition.
+
+A WebRTC `disconnected` state can be temporary. Keep the session open for recovery; do not treat it as the same as `failed` or `closed`. Compare successive statistics: if host `framesEncoded/bytesSent` continue increasing while Android `framesReceived/bytesReceived` stop, investigate the network path; if sender frames stop too, investigate host capture or WebView2 canvas output; if bytes and frames continue but video time stops, investigate Android video playback/rendering.
+
 ### WebRTC connection troubleshooting
 
 The manual host and viewer exchange now tries both Google's STUN endpoint and Cloudflare's public STUN endpoint. STUN discovers candidate addresses; it does not relay video. A browser error **701** means that ICE could not reach the named STUN/TURN server from that ICE agent. It does not, by itself, prove that Windows Firewall is blocking the peer connection.
