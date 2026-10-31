@@ -243,6 +243,7 @@
   }
 
   function disconnect() {
+    void releaseScreenWakeLock();
     if (statsTimer) {
       clearInterval(statsTimer);
       statsTimer = null;
