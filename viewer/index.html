@@ -62,6 +62,8 @@
   const iceErrors = [];
   const disconnectButton = document.getElementById('disconnect');
   let peerConnection = null;
+  let statsTimer = null;
+  let receivedVideoTrack = null;
 
   function setStatus(message) {
     status.textContent = message;
@@ -104,13 +106,35 @@
         return 0;
       });
 
+      const inboundVideo = entries.find(stat =>
+        stat.type === 'inbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video'));
+      const selectedPair = sortedPairs.find(pair => pair.id === selectedPairId) || sortedPairs[0];
+      const videoLines = [
+        'Video received: frames=' + (inboundVideo?.framesReceived ?? '?') +
+          ', decoded=' + (inboundVideo?.framesDecoded ?? '?') +
+          ', bytes=' + (inboundVideo?.bytesReceived ?? '?') +
+          ', packetsLost=' + (inboundVideo?.packetsLost ?? '?') +
+          ', FPS=' + (inboundVideo?.framesPerSecond ?? '?') +
+          ', freezes=' + (inboundVideo?.freezeCount ?? '?'),
+        'Video element: ' + video.videoWidth + 'x' + video.videoHeight +
+          ', readyState=' + video.readyState +
+          ', paused=' + video.paused +
+          ', currentTime=' + video.currentTime.toFixed(1) + 's',
+        'Page visibility=' + document.visibilityState +
+          ', track=' + (receivedVideoTrack?.readyState || 'not received') +
+          ', trackMuted=' + (receivedVideoTrack?.muted ?? 'n/a'),
+        'Selected pair bytes=' + (selectedPair?.bytesSent ?? '?') +
+          ' sent / ' + (selectedPair?.bytesReceived ?? '?') + ' received'
+      ];
+
       const lines = [
         'Peer: ' + pc.connectionState +
           ' · ICE: ' + pc.iceConnectionState +
           ' · gathering: ' + pc.iceGatheringState,
         'Local candidates: ' + JSON.stringify(localCounts) + ' (SDP: ' + countLocalCandidates(pc) + ')',
         'Remote candidates: ' + JSON.stringify(remoteCounts),
-        'Candidate pairs reported: ' + pairs.length
+        'Candidate pairs reported: ' + pairs.length,
+        ...videoLines
       ];
 
       for (const pair of sortedPairs.slice(0, 8)) {
@@ -145,6 +169,14 @@
     }
   }
 
+  function startStatsMonitoring(pc) {
+    if (statsTimer) clearInterval(statsTimer);
+    void updateIceDiagnostics(pc);
+    statsTimer = setInterval(() => {
+      if (peerConnection === pc) void updateIceDiagnostics(pc);
+    }, 2500);
+  }
+
   function waitForIceGatheringComplete(pc, timeoutMs = 45000) {
     if (pc.iceGatheringState === 'complete') return Promise.resolve(true);
     return new Promise(resolve => {
@@ -171,6 +203,11 @@
   }
 
   function disconnect() {
+    if (statsTimer) {
+      clearInterval(statsTimer);
+      statsTimer = null;
+    }
+    receivedVideoTrack = null;
     if (peerConnection) {
       peerConnection.close();
       peerConnection = null;
@@ -202,8 +239,13 @@
 
       pc.addEventListener('track', event => {
         const stream = event.streams?.[0] || new MediaStream([event.track]);
+        receivedVideoTrack = event.track;
+        receivedVideoTrack.addEventListener('mute', () => setStatus('Remote video track muted; the host may have stopped sending frames.'));
+        receivedVideoTrack.addEventListener('unmute', () => setStatus('Remote video track resumed.'));
+        receivedVideoTrack.addEventListener('ended', () => setStatus('Remote video track ended.'));
         video.srcObject = stream;
-        video.play().catch(() => setStatus('Connected. Press Play on the video if it does not start automatically.'));
+        video.play().catch(() => setStatus('Video received. Press Play if it does not start automatically.'));
+        void updateIceDiagnostics(pc);
       });
       pc.addEventListener('icecandidateerror', event => {
         const server = event.url || 'unknown ICE server';
@@ -238,6 +280,19 @@
           setStatus('ICE is checking candidate pairs…');
         }
       });
+      video.addEventListener('playing', () => setStatus('Video is playing.'));
+      video.addEventListener('waiting', () => setStatus('Video playback is waiting for more incoming frames…'));
+      video.addEventListener('stalled', () => setStatus('Video element reports stalled media.'));
+      video.addEventListener('pause', () => {
+        if (peerConnection === pc) setStatus('Video element is paused.');
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (peerConnection === pc) {
+          setStatus('Viewer page visibility: ' + document.visibilityState);
+          void updateIceDiagnostics(pc);
+        }
+      });
+      startStatsMonitoring(pc);
 
       pc.addTransceiver('video', { direction: 'recvonly' });
       setStatus('Applying host offer…');
