@@ -134,6 +134,12 @@ The exchange is deliberately manual in this prototype; there is no signalling se
 
 GitHub Pages is only used to serve the static viewer HTML. It does not carry the video. The workflow is manual so the first deployment is not attempted until Pages has been enabled in repository settings.
 
+### WebRTC connection troubleshooting
+
+The manual host and viewer exchange now tries both Google's STUN endpoint and Cloudflare's public STUN endpoint. STUN discovers candidate addresses; it does not relay video. A browser error **701** means that ICE could not reach the named STUN/TURN server from that ICE agent. It does not, by itself, prove that Windows Firewall is blocking the peer connection.
+
+If the peers show zero candidate pairs, check that both devices are on the same non-guest Wi-Fi, that the router does not have AP/client isolation enabled, and that VPN/security software is not blocking local or UDP traffic. The host's WebRTC diagnostics are shown in a copyable text box; the viewer has a copyable ICE diagnostics panel. Both omit IP addresses.
+
 ### Network limitations
 
 The prototype configures a public STUN server and uses non-trickle ICE by exchanging the complete offer and answer after candidate gathering. It does not include a TURN server. Direct peer-to-peer media works only when the two networks can establish a usable ICE candidate pair; restrictive NATs, VPNs, corporate firewalls, or blocked UDP may prevent connection. A TURN relay may be required for those networks and is not included in the zero-budget prototype. Test on the same LAN first, then on separate networks.
