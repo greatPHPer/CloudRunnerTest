@@ -21,6 +21,7 @@
     button.danger{background:#7f1d1d}
     button:disabled{opacity:.5;cursor:not-allowed}
     #status{padding:10px;border-radius:7px;min-height:42px;background:#071424;color:#a7f3d0;overflow-wrap:anywhere}
+    #diagnostics{white-space:pre-wrap;overflow-wrap:anywhere;background:#07111f;border:1px solid #2a3c55;border-radius:7px;padding:10px;color:#b9c9df;font:11px/1.5 Consolas,monospace;max-height:230px;overflow:auto}
     .notice{font-size:12px;color:#f5c58f;border:1px solid #704c2f;border-radius:8px;padding:10px;margin-top:12px}
     .steps{font-size:12px;color:#94a9c4}
     @media(max-width:800px){main{grid-template-columns:1fr}.viewer{order:0}.connect{order:1}}
@@ -33,6 +34,7 @@
     <p>Receive a live, view-only Windows application preview from a CloudRunner host. This page does not install software or run the remote EXE on your computer.</p>
     <video id="remote-video" autoplay playsinline muted controls></video>
     <p id="status" role="status">Waiting for a host offer.</p>
+    <pre id="diagnostics" aria-live="polite">ICE diagnostics will appear after connection starts.</pre>
     <button id="disconnect" class="danger" disabled>Disconnect</button>
     <p class="steps">Video is sent peer-to-peer when the network allows it. This prototype uses STUN only; some networks require a TURN relay and may not connect.</p>
   </section>
@@ -54,7 +56,9 @@
   const answerBox = document.getElementById('answer');
   const video = document.getElementById('remote-video');
   const status = document.getElementById('status');
+  const diagnostics = document.getElementById('diagnostics');
   const createButton = document.getElementById('create-answer');
+  const iceErrors = [];
   const disconnectButton = document.getElementById('disconnect');
   let peerConnection = null;
 
@@ -65,6 +69,79 @@
   function countLocalCandidates(pc) {
     const sdp = pc.localDescription?.sdp || '';
     return (sdp.match(/^a=candidate:/gm) || []).length;
+  }
+
+  async function updateIceDiagnostics(pc) {
+    try {
+      const report = await pc.getStats();
+      const entries = [];
+      report.forEach(stat => entries.push(stat));
+
+      const locals = entries.filter(stat => stat.type === 'local-candidate');
+      const remotes = entries.filter(stat => stat.type === 'remote-candidate');
+      const pairs = entries.filter(stat => stat.type === 'candidate-pair');
+      const localCounts = {};
+      const remoteCounts = {};
+
+      for (const item of locals) {
+        const kind = item.candidateType || 'unknown';
+        localCounts[kind] = (localCounts[kind] || 0) + 1;
+      }
+      for (const item of remotes) {
+        const kind = item.candidateType || 'unknown';
+        remoteCounts[kind] = (remoteCounts[kind] || 0) + 1;
+      }
+
+      const candidateById = new Map([...locals, ...remotes].map(item => [item.id, item]));
+      const transport = entries.find(item => item.type === 'transport' && item.selectedCandidatePairId);
+      const selectedPairId = transport?.selectedCandidatePairId;
+      const sortedPairs = pairs.slice().sort((a, b) => {
+        if (a.id === selectedPairId) return -1;
+        if (b.id === selectedPairId) return 1;
+        if (a.state === 'succeeded' && b.state !== 'succeeded') return -1;
+        if (b.state === 'succeeded' && a.state !== 'succeeded') return 1;
+        return 0;
+      });
+
+      const lines = [
+        'Peer: ' + pc.connectionState +
+          ' · ICE: ' + pc.iceConnectionState +
+          ' · gathering: ' + pc.iceGatheringState,
+        'Local candidates: ' + JSON.stringify(localCounts) + ' (SDP: ' + countLocalCandidates(pc) + ')',
+        'Remote candidates: ' + JSON.stringify(remoteCounts),
+        'Candidate pairs reported: ' + pairs.length
+      ];
+
+      for (const pair of sortedPairs.slice(0, 8)) {
+        const local = candidateById.get(pair.localCandidateId);
+        const remote = candidateById.get(pair.remoteCandidateId);
+        const selected = pair.id === selectedPairId || pair.selected === true;
+        lines.push(
+          (selected ? '* SELECTED ' : '* ') +
+          (pair.state || 'unknown') + ': ' +
+          (local?.candidateType || '?') + '/' + (local?.protocol || '?') +
+          ' → ' +
+          (remote?.candidateType || '?') + '/' + (remote?.protocol || '?') +
+          ' · requests sent=' + (pair.requestsSent ?? '?') +
+          ', responses received=' + (pair.responsesReceived ?? '?') +
+          ', bytes sent=' + (pair.bytesSent ?? '?') +
+          ', bytes received=' + (pair.bytesReceived ?? '?'));
+      }
+
+      if (sortedPairs.length === 0) {
+        lines.push('No candidate-pair statistics are available yet.');
+      }
+
+      if (iceErrors.length) {
+        lines.push('ICE server errors:');
+        for (const message of iceErrors.slice(-4)) lines.push('  ' + message);
+      }
+
+      lines.push('Note: IP addresses are intentionally omitted.');
+      diagnostics.textContent = lines.join('\n');
+    } catch (error) {
+      diagnostics.textContent = 'Could not read WebRTC statistics: ' + (error?.message || String(error));
+    }
   }
 
   function waitForIceGatheringComplete(pc, timeoutMs = 45000) {
@@ -128,21 +205,34 @@
       pc.addEventListener('icecandidateerror', event => {
         const server = event.url || 'unknown ICE server';
         const detail = event.errorText || 'candidate gathering error';
-        setStatus('ICE server error ' + event.errorCode + ' (' + server + '): ' + detail);
+        const message = 'code ' + event.errorCode + ' at ' + server + ': ' + detail;
+        iceErrors.push(message);
+        setStatus('ICE server error: ' + message);
+        void updateIceDiagnostics(pc);
       });
       pc.addEventListener('icegatheringstatechange', () => {
+        void updateIceDiagnostics(pc);
         setStatus('ICE gathering: ' + pc.iceGatheringState +
           ' · candidates found: ' + countLocalCandidates(pc));
       });
       pc.addEventListener('connectionstatechange', () => {
-        if (peerConnection === pc) setStatus('Peer connection: ' + pc.connectionState);
+        if (peerConnection !== pc) return;
+        if (pc.connectionState === 'failed') {
+          setStatus('Peer connection failed. See ICE diagnostics below.');
+          void updateIceDiagnostics(pc);
+        } else {
+          setStatus('Peer connection: ' + pc.connectionState);
+        }
       });
       pc.addEventListener('iceconnectionstatechange', () => {
         if (peerConnection !== pc) return;
+        void updateIceDiagnostics(pc);
         if (pc.iceConnectionState === 'failed') {
-          setStatus('ICE connection failed. This network may require a TURN relay.');
+          setStatus('ICE connection failed: no usable network path was found. See diagnostics below.');
         } else if (pc.iceConnectionState === 'disconnected') {
           setStatus('Peer connection temporarily disconnected; waiting for recovery…');
+        } else if (pc.iceConnectionState === 'checking') {
+          setStatus('ICE is checking candidate pairs…');
         }
       });
 
