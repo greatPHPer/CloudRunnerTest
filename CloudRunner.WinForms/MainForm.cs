@@ -642,6 +642,9 @@ internal sealed class MainForm : Form
                       <textarea id="answer" spellcheck="false" placeholder="Paste the answer received from the viewer…"></textarea>
                       <button id="apply-answer">2. Apply answer / connect</button>
                       <p id="peer-status" role="status">No remote viewer connected.</p>
+                      <label for="peer-diagnostics">Connection diagnostics (copyable)</label>
+                      <textarea id="peer-diagnostics" readonly spellcheck="false" style="min-height:110px" placeholder="WebRTC diagnostics will appear here…"></textarea>
+                      <button id="copy-peer-diagnostics" class="secondary">Copy connection diagnostics</button>
                       <button id="end-session" class="danger">End remote session</button>
                       <p class="small">This prototype uses a public STUN server and manual offer/answer exchange. Some networks require a TURN relay and may not connect.</p>
                       <div class="warning">Share the offer only with a person you trust. It contains connection details and allows its recipient to view the application window while the session is active. No mouse or keyboard control is exposed.</div>
@@ -655,6 +658,7 @@ internal sealed class MainForm : Form
                       const offerBox = document.getElementById('offer');
                       const answerBox = document.getElementById('answer');
                       const status = document.getElementById('peer-status');
+                      const diagnostics = document.getElementById('peer-diagnostics');
                       const createButton = document.getElementById('create-offer');
                       const applyButton = document.getElementById('apply-answer');
                       let peerConnection = null;
@@ -662,6 +666,10 @@ internal sealed class MainForm : Form
 
                       function setStatus(message) {
                         status.textContent = message;
+                        const stamp = new Date().toLocaleTimeString();
+                        const lines = diagnostics.value ? diagnostics.value.split('\\n') : [];
+                        lines.push('[' + stamp + '] ' + message);
+                        diagnostics.value = lines.slice(-60).join('\\n');
                       }
 
                       function waitForIceGatheringComplete(pc, timeoutMs = 30000) {
@@ -727,21 +735,28 @@ internal sealed class MainForm : Form
                           setStatus('Creating WebRTC offer…');
 
                           const pc = new RTCPeerConnection({
-                            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                            iceServers: [
+                              { urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }
+                            ]
                           });
                           peerConnection = pc;
                           outboundStream = canvas.captureStream(5);
                           outboundStream.getTracks().forEach(track => pc.addTrack(track, outboundStream));
 
-                          pc.addEventListener('connectionstatechange', () => {
-                            if (peerConnection !== pc) return;
-                            setStatus('Peer connection: ' + pc.connectionState);
+                          pc.addEventListener('icecandidateerror', event => {
+                            setStatus('STUN/ICE server error ' + event.errorCode + ' at ' +
+                              (event.url || 'unknown server') + ': ' + (event.errorText || 'no detail'));
+                          });
+                          pc.addEventListener('icegatheringstatechange', () => {
+                            if (peerConnection === pc) setStatus('ICE gathering: ' + pc.iceGatheringState);
                           });
                           pc.addEventListener('iceconnectionstatechange', () => {
+                            if (peerConnection === pc) setStatus('ICE connection: ' + pc.iceConnectionState);
+                          });
+                          pc.addEventListener('connectionstatechange', () => {
                             if (peerConnection !== pc) return;
-                            if (pc.iceConnectionState === 'failed') {
-                              setStatus('ICE connection failed. This network may require a TURN relay.');
-                            }
+                            setStatus('Peer connection: ' + pc.connectionState +
+                              ' · signaling: ' + pc.signalingState);
                           });
 
                           const offer = await pc.createOffer();
@@ -779,11 +794,25 @@ internal sealed class MainForm : Form
                             throw new Error('The pasted text is not a valid WebRTC answer.');
                           }
                           await peerConnection.setRemoteDescription(answer);
-                          setStatus('Answer accepted. Waiting for the peer-to-peer video connection…');
+                          setStatus('Answer accepted. Signaling: ' + peerConnection.signalingState +
+                            ' · ICE: ' + peerConnection.iceConnectionState +
+                            '. Waiting for the peer-to-peer video connection…');
                         } catch (error) {
-                          setStatus('Could not apply answer: ' + (error?.message || String(error)));
+                          setStatus('Could not apply answer: ' + (error?.message || String(error)) +
+                            ' · signaling: ' + (peerConnection?.signalingState || 'no peer'));
                         } finally {
                           applyButton.disabled = false;
+                        }
+                      });
+
+                      document.getElementById('copy-peer-diagnostics').addEventListener('click', async () => {
+                        diagnostics.focus();
+                        diagnostics.select();
+                        try {
+                          await navigator.clipboard.writeText(diagnostics.value);
+                          setStatus('Connection diagnostics copied to clipboard.');
+                        } catch {
+                          setStatus('Diagnostics selected. Press Ctrl+C to copy.');
                         }
                       });
 
