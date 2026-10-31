@@ -111,6 +111,32 @@ This phase does **not** yet provide remote mouse/keyboard control, peer-to-peer 
 
 Minimized or closed windows may not yield a frame. Some applications use multiple processes or child windows; the current HostAgent reports the launched process's main top-level window only.
 
+## Experimental manual WebRTC video viewer
+
+The first remote-viewing prototype sends **video only** from the host's existing local preview. It uses the WebView2 canvas capture stream and a browser `RTCPeerConnection`; the canvas track is capped at approximately 5 FPS.
+
+- **Host:** start the application and click **Start live preview**. In the preview's Remote viewing panel, click **Create viewer offer**. Select the offer text and copy it.
+- **Viewer:** open the static page in `viewer/index.html` (or the published GitHub Pages site), paste the host offer, and click **Create viewer answer**. Copy the generated answer.
+- **Host:** paste the viewer answer into CloudRunner and click **Apply answer / connect**.
+- **End:** stop the live preview or click **End remote session** on the host. Stopping local preview closes the WebRTC peer connection.
+
+The exchange is deliberately manual in this prototype; there is no signalling service yet. Send offer/answer text only through a trusted private channel. SDP contains ICE connection details, and anyone who completes the exchange can view the host window while the peer session is active. This prototype does not send mouse, keyboard, clipboard, files, audio, or commands.
+
+### Publish the browser viewer with GitHub Pages
+
+1. In the repository, open **Settings → Pages**.
+2. Under **Build and deployment → Source**, choose **GitHub Actions** and save.
+3. Open **Actions → Deploy CloudRunner Remote Viewer → Run workflow**.
+4. After the deployment succeeds, the viewer should be available at `https://greatphper.github.io/CloudRunnerTest/`.
+
+GitHub Pages is only used to serve the static viewer HTML. It does not carry the video. The workflow is manual so the first deployment is not attempted until Pages has been enabled in repository settings.
+
+### Network limitations
+
+The prototype configures a public STUN server and uses non-trickle ICE by exchanging the complete offer and answer after candidate gathering. It does not include a TURN server. Direct peer-to-peer media works only when the two networks can establish a usable ICE candidate pair; restrictive NATs, VPNs, corporate firewalls, or blocked UDP may prevent connection. A TURN relay may be required for those networks and is not included in the zero-budget prototype. Test on the same LAN first, then on separate networks.
+
+This is an experimental demonstration, not a hardened remote-access product. Treat the SDP exchange as a temporary viewing invitation and end the session when finished.
+
 ## Zero-cost public distribution
 
 CloudRunner itself can be distributed through GitHub Releases. Every public user runs the app on their own Windows PC. CloudRunner does not consume your work laptop or any central Windows VM.
@@ -127,6 +153,6 @@ The later optional remote collaboration feature will use direct WebRTC peer-to-p
 
 1. **Phase 1:** local HostAgent, verified download and process lifecycle.
 2. **Phase 2:** continuous local window-frame capture and WebView2 rendering (initial implementation is present; performance and compatibility testing remain).
-3. **Phase 3:** WebRTC peer-to-peer video and input with explicit host consent.
-4. **Phase 4:** free-tier signalling/pairing, quotas and abuse controls.
+3. **Phase 3:** experimental video-only WebRTC peer-to-peer prototype (manual SDP exchange is now present; cross-network compatibility testing remains).
+4. **Phase 4:** signalling/pairing, viewer authentication, TURN strategy, quotas and abuse controls; remote input remains disabled until a separate security review.
 5. **Phase 5:** review hardening, installer, public documentation and publisher trust/safety workflow.
