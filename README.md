@@ -13,16 +13,19 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - **Window preview:** WgcSharp using Windows Graphics Capture first, with DXGI Desktop Duplication fallback, targeting the launched process's top-level HWND.
 - **Continuous preview:** sequential local frame capture, rendered in WebView2 without navigating/reloading the page for each frame; currently capped at about 5 frames per second.
 - **Cloud compute:** none.
-- **Remote video streaming:** not implemented yet.
-- **Remote pairing/signalling:** not implemented yet.
+- **Remote video streaming:** experimental one-viewer WebRTC prototype; video only, sourced from the local preview canvas at about 5 FPS, with manual offer/answer exchange.
+- **Remote pairing/signalling:** no signalling service yet; SDP is exchanged manually. STUN only; no TURN relay.
 
 ## Project layout
 
     CloudRunnerTest
     ├── .github/workflows
     │   ├── build-cloudrunner-winforms.yml
+    │   ├── deploy-cloudrunner-viewer.yml  # manual GitHub Pages deployment
     │   ├── diagnose-gui-session.yml       # old GitHub runner diagnostic experiment
     │   └── run-release-exe.yml            # headless Actions smoke test; not GUI hosting
+    ├── viewer
+    │   └── index.html                     # standalone browser WebRTC viewer
     ├── CloudRunner.WinForms
     │   ├── CloudRunner.WinForms.csproj
     │   ├── Program.cs
@@ -141,7 +144,7 @@ This is an experimental demonstration, not a hardened remote-access product. Tre
 
 CloudRunner itself can be distributed through GitHub Releases. Every public user runs the app on their own Windows PC. CloudRunner does not consume your work laptop or any central Windows VM.
 
-The later optional remote collaboration feature will use direct WebRTC peer-to-peer connections where network topology permits. A TURN relay would still be needed for some NAT/firewall combinations; those sessions cannot be guaranteed to work on a strict zero-budget plan.
+The experimental viewer already uses direct WebRTC peer-to-peer video when network topology permits. A TURN relay may still be needed for some NAT/firewall combinations; those sessions cannot be guaranteed to work on a strict zero-budget plan. GitHub Pages serves only the static viewer page, not the video.
 
 ## Third-party components
 
