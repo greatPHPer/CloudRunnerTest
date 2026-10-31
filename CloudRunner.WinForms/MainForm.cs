@@ -663,6 +663,7 @@ internal sealed class MainForm : Form
                       const applyButton = document.getElementById('apply-answer');
                       let peerConnection = null;
                       let outboundStream = null;
+                      let peerStatsTimer = null;
 
                       function setStatus(message) {
                         status.textContent = message;
@@ -670,6 +671,62 @@ internal sealed class MainForm : Form
                         const lines = diagnostics.value ? diagnostics.value.split('\n') : [];
                         lines.push('[' + stamp + '] ' + message);
                         diagnostics.value = lines.slice(-60).join('\n');
+                      }
+
+                      async function updatePeerDiagnostics(pc) {
+                        try {
+                          const report = await pc.getStats();
+                          const entries = [];
+                          report.forEach(stat => entries.push(stat));
+
+                          const outbound = entries.filter(stat =>
+                            stat.type === 'outbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video'));
+                          const transports = entries.filter(stat => stat.type === 'transport');
+                          const pairs = entries.filter(stat => stat.type === 'candidate-pair');
+                          const local = entries.filter(stat => stat.type === 'local-candidate');
+                          const remote = entries.filter(stat => stat.type === 'remote-candidate');
+                          const candidateById = new Map([...local, ...remote].map(stat => [stat.id, stat]));
+                          const selectedPairId = transports.find(stat => stat.selectedCandidatePairId)?.selectedCandidatePairId;
+                          const pair = pairs.find(stat => stat.id === selectedPairId) ||
+                            pairs.find(stat => stat.state === 'succeeded');
+                          const localCandidate = pair ? candidateById.get(pair.localCandidateId) : null;
+                          const remoteCandidate = pair ? candidateById.get(pair.remoteCandidateId) : null;
+                          const videoTrack = outboundStream?.getVideoTracks()[0];
+                          const videoStats = outbound[0];
+
+                          const lines = [
+                            '[' + new Date().toLocaleTimeString() + '] Peer=' + pc.connectionState +
+                              ', ICE=' + pc.iceConnectionState + ', signaling=' + pc.signalingState,
+                            'Host page=' + document.visibilityState +
+                              ', canvas=' + canvas.width + 'x' + canvas.height +
+                              ', track=' + (videoTrack?.readyState || 'none') +
+                              ', trackMuted=' + (videoTrack?.muted ?? 'n/a'),
+                            'Video sent: frames=' + (videoStats?.framesSent ?? '?') +
+                              ', encoded=' + (videoStats?.framesEncoded ?? '?') +
+                              ', bytes=' + (videoStats?.bytesSent ?? '?') +
+                              ', FPS=' + (videoStats?.framesPerSecond ?? '?'),
+                            'Selected pair=' + (pair?.state || 'none') +
+                              ' ' + (localCandidate?.candidateType || '?') + '/' + (localCandidate?.protocol || '?') +
+                              ' → ' + (remoteCandidate?.candidateType || '?') + '/' + (remoteCandidate?.protocol || '?') +
+                              ', bytesSent=' + (pair?.bytesSent ?? '?') +
+                              ', bytesReceived=' + (pair?.bytesReceived ?? '?')
+                          ];
+                          const existing = diagnostics.value.split('\\n').filter(Boolean);
+                          diagnostics.value = [...existing, ...lines].slice(-80).join('\\n');
+                        } catch (error) {
+                          const existing = diagnostics.value.split('\\n').filter(Boolean);
+                          existing.push('[' + new Date().toLocaleTimeString() + '] Stats error: ' +
+                            (error?.message || String(error)));
+                          diagnostics.value = existing.slice(-80).join('\\n');
+                        }
+                      }
+
+                      function startPeerDiagnostics(pc) {
+                        if (peerStatsTimer) clearInterval(peerStatsTimer);
+                        void updatePeerDiagnostics(pc);
+                        peerStatsTimer = setInterval(() => {
+                          if (peerConnection === pc) void updatePeerDiagnostics(pc);
+                        }, 3000);
                       }
 
                       function waitForIceGatheringComplete(pc, timeoutMs = 30000) {
@@ -691,6 +748,10 @@ internal sealed class MainForm : Form
                       }
 
                       function closePeerConnection() {
+                        if (peerStatsTimer) {
+                          clearInterval(peerStatsTimer);
+                          peerStatsTimer = null;
+                        }
                         if (peerConnection) {
                           peerConnection.close();
                           peerConnection = null;
@@ -741,7 +802,18 @@ internal sealed class MainForm : Form
                           });
                           peerConnection = pc;
                           outboundStream = canvas.captureStream(5);
-                          outboundStream.getTracks().forEach(track => pc.addTrack(track, outboundStream));
+                          outboundStream.getTracks().forEach(track => {
+                            pc.addTrack(track, outboundStream);
+                            track.addEventListener('mute', () => setStatus('Outgoing video track was muted.'));
+                            track.addEventListener('unmute', () => setStatus('Outgoing video track resumed.'));
+                            track.addEventListener('ended', () => setStatus('Outgoing video track ended.'));
+                          });
+                          document.addEventListener('visibilitychange', () => {
+                            if (peerConnection === pc) {
+                              setStatus('Host page visibility: ' + document.visibilityState);
+                              void updatePeerDiagnostics(pc);
+                            }
+                          });
 
                           pc.addEventListener('icecandidateerror', event => {
                             setStatus('STUN/ICE server error ' + event.errorCode + ' at ' +
@@ -756,8 +828,14 @@ internal sealed class MainForm : Form
                           pc.addEventListener('connectionstatechange', () => {
                             if (peerConnection !== pc) return;
                             setStatus('Peer connection: ' + pc.connectionState +
+                              ' · ICE: ' + pc.iceConnectionState +
                               ' · signaling: ' + pc.signalingState);
+                            void updatePeerDiagnostics(pc);
                           });
+                          pc.addEventListener('iceconnectionstatechange', () => {
+                            if (peerConnection === pc) void updatePeerDiagnostics(pc);
+                          });
+                          startPeerDiagnostics(pc);
 
                           const offer = await pc.createOffer();
                           await pc.setLocalDescription(offer);
