@@ -667,9 +667,9 @@ internal sealed class MainForm : Form
                       function setStatus(message) {
                         status.textContent = message;
                         const stamp = new Date().toLocaleTimeString();
-                        const lines = diagnostics.value ? diagnostics.value.split('\\n') : [];
+                        const lines = diagnostics.value ? diagnostics.value.split('\n') : [];
                         lines.push('[' + stamp + '] ' + message);
-                        diagnostics.value = lines.slice(-60).join('\\n');
+                        diagnostics.value = lines.slice(-60).join('\n');
                       }
 
                       function waitForIceGatheringComplete(pc, timeoutMs = 30000) {
