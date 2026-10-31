@@ -531,6 +531,18 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            try
+            {
+                if (_preview.CoreWebView2 is not null)
+                {
+                    await _preview.ExecuteScriptAsync("window.cloudRunnerClosePeer?.();");
+                }
+            }
+            catch
+            {
+                // The WebView may already be shutting down; the local preview still needs to finish stopping.
+            }
+
             if (ReferenceEquals(_previewCts, cts))
             {
                 _previewCts = null;
@@ -584,14 +596,202 @@ internal sealed class MainForm : Form
         {
             _preview.NavigateToString("""
                 <!doctype html>
-                <html><head><meta charset="utf-8">
-                <style>
-                  html,body{height:100%;margin:0;background:#0a0f19;color:#cbd5e1;font:14px 'Segoe UI',sans-serif}
-                  body{display:grid;place-items:center;overflow:hidden}
-                  #live-frame{max-width:100%;max-height:100%;object-fit:contain}
-                  #hint{position:fixed;left:12px;bottom:10px;padding:6px 9px;background:#101827cc;border-radius:5px;color:#aab9cd}
-                </style></head>
-                <body><img id="live-frame" alt="Live application preview"><div id="hint">Waiting for first frame…</div></body></html>
+                <html lang="en">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <title>CloudRunner local preview</title>
+                  <style>
+                    *{box-sizing:border-box}
+                    html,body{height:100%;margin:0;background:#0a0f19;color:#dbe6f5;font:14px 'Segoe UI',sans-serif}
+                    #layout{height:100%;display:grid;grid-template-columns:minmax(0,1fr) 310px;min-width:0}
+                    #stage{position:relative;display:grid;place-items:center;min-width:0;min-height:0;overflow:hidden;background:#050a12}
+                    #local-frame{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+                    #hint{position:absolute;left:16px;bottom:16px;padding:8px 11px;background:#101827e8;border:1px solid #26364d;border-radius:7px;color:#b5c5da}
+                    #host-label{position:absolute;top:12px;left:14px;padding:5px 8px;background:#142238e8;border-radius:5px;color:#93c5fd;font-size:11px;font-weight:700;letter-spacing:.06em}
+                    #panel{min-width:0;overflow:auto;padding:16px;background:#111b2b;border-left:1px solid #26364d}
+                    h2{font-size:17px;margin:0 0 7px;color:#fff}
+                    p{color:#afbed2;line-height:1.45;margin:7px 0 12px}
+                    label{display:block;font-weight:600;margin:12px 0 6px;color:#dbe6f5}
+                    textarea{display:block;width:100%;min-height:94px;resize:vertical;border:1px solid #3a4b64;border-radius:6px;background:#07111f;color:#dbeafe;padding:8px;font:11px Consolas,monospace}
+                    button{width:100%;border:0;border-radius:6px;padding:9px 10px;margin:4px 0;background:#2563eb;color:white;font-weight:600;cursor:pointer}
+                    button.secondary{background:#31435c}
+                    button.danger{background:#7f1d1d}
+                    button:disabled{opacity:.5;cursor:not-allowed}
+                    #peer-status{padding:9px;border-radius:6px;background:#091424;color:#a7f3d0;min-height:38px;overflow-wrap:anywhere}
+                    .warning{font-size:11px;color:#facc9b;line-height:1.45;border:1px solid #704c2f;border-radius:6px;padding:9px;margin-top:12px}
+                    .small{font-size:11px;color:#8fa4bf}
+                    @media(max-width:760px){#layout{grid-template-columns:minmax(0,1fr)}#panel{max-height:46%;border-left:0;border-top:1px solid #26364d}#stage{min-height:54%}}
+                  </style>
+                </head>
+                <body>
+                  <div id="layout">
+                    <section id="stage">
+                      <canvas id="local-frame" aria-label="Local application preview"></canvas>
+                      <div id="hint">Waiting for first captured frame…</div>
+                      <div id="host-label">HOST · LOCAL CAPTURE</div>
+                    </section>
+                    <aside id="panel">
+                      <h2>Remote viewing</h2>
+                      <p>Experimental, video-only WebRTC. Start live preview, create an offer, and exchange the text with one trusted viewer.</p>
+                      <button id="create-offer">1. Create viewer offer</button>
+                      <label for="offer">Host offer (copy this to the viewer)</label>
+                      <textarea id="offer" spellcheck="false" readonly placeholder="Create an offer first…"></textarea>
+                      <button id="select-offer" class="secondary">Select offer text for copying</button>
+                      <label for="answer">Viewer answer (paste it here)</label>
+                      <textarea id="answer" spellcheck="false" placeholder="Paste the answer received from the viewer…"></textarea>
+                      <button id="apply-answer">2. Apply answer / connect</button>
+                      <p id="peer-status" role="status">No remote viewer connected.</p>
+                      <button id="end-session" class="danger">End remote session</button>
+                      <p class="small">This prototype uses a public STUN server and manual offer/answer exchange. Some networks require a TURN relay and may not connect.</p>
+                      <div class="warning">Share the offer only with a person you trust. It contains connection details and allows its recipient to view the application window while the session is active. No mouse or keyboard control is exposed.</div>
+                    </aside>
+                  </div>
+                  <script>
+                    (() => {
+                      const canvas = document.getElementById('local-frame');
+                      const context = canvas.getContext('2d');
+                      const hint = document.getElementById('hint');
+                      const offerBox = document.getElementById('offer');
+                      const answerBox = document.getElementById('answer');
+                      const status = document.getElementById('peer-status');
+                      const createButton = document.getElementById('create-offer');
+                      const applyButton = document.getElementById('apply-answer');
+                      let peerConnection = null;
+                      let outboundStream = null;
+
+                      function setStatus(message) {
+                        status.textContent = message;
+                      }
+
+                      function waitForIceGatheringComplete(pc, timeoutMs = 30000) {
+                        if (pc.iceGatheringState === 'complete') return Promise.resolve();
+                        return new Promise((resolve, reject) => {
+                          const finish = (error) => {
+                            clearTimeout(timer);
+                            pc.removeEventListener('icegatheringstatechange', changed);
+                            if (error) reject(error); else resolve();
+                          };
+                          const changed = () => {
+                            if (pc.iceGatheringState === 'complete') finish();
+                          };
+                          const timer = setTimeout(
+                            () => finish(new Error('ICE candidate gathering timed out. Try again or test both PCs on the same network.')),
+                            timeoutMs);
+                          pc.addEventListener('icegatheringstatechange', changed);
+                        });
+                      }
+
+                      function closePeerConnection() {
+                        if (peerConnection) {
+                          peerConnection.close();
+                          peerConnection = null;
+                        }
+                        if (outboundStream) {
+                          outboundStream.getTracks().forEach(track => track.stop());
+                          outboundStream = null;
+                        }
+                        setStatus('Remote session ended.');
+                      }
+
+                      window.cloudRunnerSetFrame = (dataUri) => {
+                        const image = new Image();
+                        image.onload = () => {
+                          if (canvas.width !== image.naturalWidth || canvas.height !== image.naturalHeight) {
+                            canvas.width = image.naturalWidth;
+                            canvas.height = image.naturalHeight;
+                          }
+                          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                          hint.style.display = 'none';
+                        };
+                        image.onerror = () => setStatus('A local preview frame could not be decoded.');
+                        image.src = dataUri;
+                      };
+
+                      window.cloudRunnerClosePeer = closePeerConnection;
+
+                      createButton.addEventListener('click', async () => {
+                        createButton.disabled = true;
+                        try {
+                          if (!canvas.width || !canvas.height || hint.style.display !== 'none') {
+                            throw new Error('Start live preview and wait for the first frame before creating an offer.');
+                          }
+
+                          closePeerConnection();
+                          offerBox.value = '';
+                          answerBox.value = '';
+                          setStatus('Creating WebRTC offer…');
+
+                          const pc = new RTCPeerConnection({
+                            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                          });
+                          peerConnection = pc;
+                          outboundStream = canvas.captureStream(5);
+                          outboundStream.getTracks().forEach(track => pc.addTrack(track, outboundStream));
+
+                          pc.addEventListener('connectionstatechange', () => {
+                            if (peerConnection !== pc) return;
+                            setStatus('Peer connection: ' + pc.connectionState);
+                          });
+                          pc.addEventListener('iceconnectionstatechange', () => {
+                            if (peerConnection !== pc) return;
+                            if (pc.iceConnectionState === 'failed') {
+                              setStatus('ICE connection failed. This network may require a TURN relay.');
+                            }
+                          });
+
+                          const offer = await pc.createOffer();
+                          await pc.setLocalDescription(offer);
+                          setStatus('Gathering network candidates. Please wait…');
+                          await waitForIceGatheringComplete(pc);
+
+                          if (peerConnection !== pc) throw new Error('The remote session was ended while creating the offer.');
+                          offerBox.value = JSON.stringify(pc.localDescription);
+                          setStatus('Offer ready. Copy it to the trusted viewer and wait for the answer.');
+                        } catch (error) {
+                          setStatus('Offer failed: ' + (error?.message || String(error)));
+                          closePeerConnection();
+                        } finally {
+                          createButton.disabled = false;
+                        }
+                      });
+
+                      document.getElementById('select-offer').addEventListener('click', () => {
+                        if (!offerBox.value) {
+                          setStatus('Create an offer first.');
+                          return;
+                        }
+                        offerBox.focus();
+                        offerBox.select();
+                        setStatus('Offer selected. Press Ctrl+C to copy it.');
+                      });
+
+                      applyButton.addEventListener('click', async () => {
+                        applyButton.disabled = true;
+                        try {
+                          if (!peerConnection) throw new Error('Create a new offer before applying the answer.');
+                          const answer = JSON.parse(answerBox.value);
+                          if (answer?.type !== 'answer' || typeof answer.sdp !== 'string') {
+                            throw new Error('The pasted text is not a valid WebRTC answer.');
+                          }
+                          await peerConnection.setRemoteDescription(answer);
+                          setStatus('Answer accepted. Waiting for the peer-to-peer video connection…');
+                        } catch (error) {
+                          setStatus('Could not apply answer: ' + (error?.message || String(error)));
+                        } finally {
+                          applyButton.disabled = false;
+                        }
+                      });
+
+                      document.getElementById('end-session').addEventListener('click', () => {
+                        closePeerConnection();
+                        offerBox.value = '';
+                        answerBox.value = '';
+                      });
+                    })();
+                  </script>
+                </body>
+                </html>
                 """);
 
             await navigation.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
@@ -609,9 +809,7 @@ internal sealed class MainForm : Form
 
         var dataUri = "data:image/jpeg;base64," + Convert.ToBase64String(jpegBytes);
         var encodedDataUri = JsonSerializer.Serialize(dataUri);
-        await core.ExecuteScriptAsync(
-            $"document.getElementById('live-frame').src = {encodedDataUri}; " +
-            "document.getElementById('hint').style.display = 'none';");
+        await core.ExecuteScriptAsync($"window.cloudRunnerSetFrame({encodedDataUri});");
     }
 
     private async Task ShowCapturedImageAsync(byte[] jpegBytes)
@@ -714,7 +912,7 @@ internal sealed class MainForm : Form
             <body><main><h2>CloudRunner application preview</h2>
             <p>Start the dedicated capture test window, or provide a trusted GitHub Release EXE URL and SHA-256.</p>
             <p>After the application opens, click <b>Capture application window</b> for one frame, or <b>Start live preview</b> for continuous local updates.</p>
-            <p>Live preview is currently capped at about 5 frames per second. Remote streaming is a separate milestone.</p>
+            <p>Live preview is currently capped at about 5 frames per second. The experimental remote-viewing panel can send this preview to one browser viewer over WebRTC.</p>
             </main></body></html>
             """);
     }
