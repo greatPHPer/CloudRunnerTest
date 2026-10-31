@@ -172,8 +172,9 @@
           ' candidate(s), but ICE gathering did not finish within 45 seconds. Try this answer; if it fails, retry on the same Wi-Fi with VPN disabled.');
       }
     } catch (error) {
-      setStatus('Could not create viewer answer: ' + (error?.message || String(error)));
+      const message = error?.message || String(error);
       disconnect();
+      setStatus('Could not create viewer answer: ' + message);
     } finally {
       createButton.disabled = false;
     }
