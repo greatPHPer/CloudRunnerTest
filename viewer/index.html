@@ -62,21 +62,33 @@
     status.textContent = message;
   }
 
-  function waitForIceGatheringComplete(pc, timeoutMs = 30000) {
-    if (pc.iceGatheringState === 'complete') return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const finish = (error) => {
+  function countLocalCandidates(pc) {
+    const sdp = pc.localDescription?.sdp || '';
+    return (sdp.match(/^a=candidate:/gm) || []).length;
+  }
+
+  function waitForIceGatheringComplete(pc, timeoutMs = 45000) {
+    if (pc.iceGatheringState === 'complete') return Promise.resolve(true);
+    return new Promise(resolve => {
+      let finished = false;
+      const finish = completed => {
+        if (finished) return;
+        finished = true;
         clearTimeout(timer);
         pc.removeEventListener('icegatheringstatechange', changed);
-        if (error) reject(error); else resolve();
+        pc.removeEventListener('icecandidate', changed);
+        resolve(completed);
       };
       const changed = () => {
-        if (pc.iceGatheringState === 'complete') finish();
+        const count = countLocalCandidates(pc);
+        setStatus('Gathering viewer network candidates… ' + count +
+          ' candidate(s); ICE state: ' + pc.iceGatheringState);
+        if (pc.iceGatheringState === 'complete') finish(true);
       };
-      const timer = setTimeout(
-        () => finish(new Error('ICE candidate gathering timed out. Try again or test both PCs on the same network.')),
-        timeoutMs);
+      const timer = setTimeout(() => finish(false), timeoutMs);
       pc.addEventListener('icegatheringstatechange', changed);
+      pc.addEventListener('icecandidate', changed);
+      changed();
     });
   }
 
@@ -113,6 +125,15 @@
         video.srcObject = stream;
         video.play().catch(() => setStatus('Connected. Press Play on the video if it does not start automatically.'));
       });
+      pc.addEventListener('icecandidateerror', event => {
+        const server = event.url || 'unknown ICE server';
+        const detail = event.errorText || 'candidate gathering error';
+        setStatus('ICE server error ' + event.errorCode + ' (' + server + '): ' + detail);
+      });
+      pc.addEventListener('icegatheringstatechange', () => {
+        setStatus('ICE gathering: ' + pc.iceGatheringState +
+          ' · candidates found: ' + countLocalCandidates(pc));
+      });
       pc.addEventListener('connectionstatechange', () => {
         if (peerConnection === pc) setStatus('Peer connection: ' + pc.connectionState);
       });
@@ -126,17 +147,32 @@
       });
 
       pc.addTransceiver('video', { direction: 'recvonly' });
+      setStatus('Applying host offer…');
       await pc.setRemoteDescription(offer);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      setStatus('Gathering network candidates. Please wait…');
-      await waitForIceGatheringComplete(pc);
+      setStatus('Gathering viewer network candidates…');
+      const gatheringCompleted = await waitForIceGatheringComplete(pc);
 
       if (peerConnection !== pc) throw new Error('The viewer disconnected while creating the answer.');
+      const candidateCount = countLocalCandidates(pc);
+      if (candidateCount === 0) {
+        throw new Error(
+          'Android Chrome did not provide any ICE candidates. Check Wi-Fi/mobile data, VPN and browser network permissions, then retry.');
+      }
+
       answerBox.value = JSON.stringify(pc.localDescription);
-      setStatus('Answer ready. Copy it back to the CloudRunner host and wait for video.');
+      disconnectButton.disabled = false;
+
+      if (gatheringCompleted) {
+        setStatus('Answer ready with ' + candidateCount +
+          ' ICE candidate(s). Copy it back to the CloudRunner host.');
+      } else {
+        setStatus('Answer created with ' + candidateCount +
+          ' candidate(s), but ICE gathering did not finish within 45 seconds. Try this answer; if it fails, retry on the same Wi-Fi with VPN disabled.');
+      }
     } catch (error) {
-      setStatus('Could not connect: ' + (error?.message || String(error)));
+      setStatus('Could not create viewer answer: ' + (error?.message || String(error)));
       disconnect();
     } finally {
       createButton.disabled = false;
