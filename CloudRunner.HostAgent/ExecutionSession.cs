@@ -271,8 +271,8 @@ internal sealed class ExecutionSession : IAsyncDisposable
         EnsureStandardUserContext();
         var environmentSummary = await WslRuntime.GetEnvironmentSummaryAsync(cancellationToken);
         await WslRuntime.EnsureExecutableExistsAsync(
-            "/usr/bin/xeyes",
-            "sudo apt update && sudo apt install -y x11-apps",
+            "/usr/bin/xterm",
+            "sudo apt update && sudo apt install -y xterm",
             cancellationToken);
 
         Directory.CreateDirectory(_jobsRoot);
@@ -290,9 +290,9 @@ internal sealed class ExecutionSession : IAsyncDisposable
             _linuxWindowTitle = null;
 
             _linuxProcess = WslRuntime.StartLinuxApplication(
-                "/usr/bin/xeyes",
+                "/usr/bin/xterm",
                 _linuxPidFileWslPath,
-                [],
+                ["-T", "CloudRunner input test", "-geometry", "90x28"],
                 isAppImage: false);
 
             (long Handle, string Title)? window = null;
@@ -318,12 +318,12 @@ internal sealed class ExecutionSession : IAsyncDisposable
             if (_linuxProcess.HasExited && !window.HasValue)
             {
                 throw new InvalidOperationException(
-                    $"The xeyes test application exited during startup (WSL session exit code {_linuxProcess.ExitCode}).");
+                    $"The xterm test application exited during startup (WSL session exit code {_linuxProcess.ExitCode}).");
             }
 
             var message = window.HasValue
-                ? "The WSLg xeyes test window is ready for WebView2 capture."
-                : "The xeyes process started, but no new desktop window was detected yet. Refresh process / window status.";
+                ? "The WSLg xterm input-test window is ready for WebView2 capture and remote keyboard testing."
+                : "The xterm process started, but no new desktop window was detected yet. Refresh process / window status.";
 
             return new AgentResponse(
                 true,
