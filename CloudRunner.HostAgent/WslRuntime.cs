@@ -27,8 +27,8 @@ internal static class WslRuntime
         }
 
         var environment = await RunAsync(
-            ["--exec", "/bin/sh", "-lc",
-             "printf '%s\\n%s\\n%s\\n' \\"$WSL_DISTRO_NAME\\" \\"$DISPLAY\\" \\"$WAYLAND_DISPLAY\\""],
+            ["--exec", "/bin/sh", "-c",
+             "printf '%s\\n%s\\n%s\\n' \"$WSL_DISTRO_NAME\" \"$DISPLAY\" \"$WAYLAND_DISPLAY\""],
             cancellationToken);
 
         if (environment.ExitCode != 0)
@@ -111,7 +111,7 @@ internal static class WslRuntime
         // The shell writes its PID before replacing itself with the application.
         // setsid gives this application a dedicated process group, allowing Stop
         // to terminate the application and its same-session child processes.
-        startInfo.ArgumentList.Add("printf '%s' \\"$$\\" > \\"$1\\"; shift; exec \\"$@\\"");
+        startInfo.ArgumentList.Add("printf '%s' \"$$\" > \"$1\"; shift; exec \"$@\"");
         startInfo.ArgumentList.Add("cloudrunner");
         startInfo.ArgumentList.Add(linuxPidFilePath);
         startInfo.ArgumentList.Add(linuxExecutablePath);
@@ -131,15 +131,14 @@ internal static class WslRuntime
         CancellationToken cancellationToken)
     {
         var signal = force ? "KILL" : "TERM";
-        const string script =
-            "pid=$(cat \\"$1\\" 2>/dev/null || true); " +
-            "case \\"$pid\\" in ''|*[!0-9]*) exit 0;; esac; " +
-            "kill -SIGNAL_PLACEHOLDER -- \\"-$pid\\" 2>/dev/null || " +
-            "kill -SIGNAL_PLACEHOLDER \\"$pid\\" 2>/dev/null || true";
+        var script =
+            "pid=$(cat \"$1\" 2>/dev/null || true); " +
+            "case \"$pid\" in ''|*[!0-9]*) exit 0;; esac; " +
+            $"kill -{signal} -- \"-$pid\" 2>/dev/null || " +
+            $"kill -{signal} \"$pid\" 2>/dev/null || true";
 
-        var safeScript = script.Replace("SIGNAL_PLACEHOLDER", signal, StringComparison.Ordinal);
         _ = await RunAsync(
-            ["--exec", "/bin/sh", "-c", safeScript, "cloudrunner-stop", linuxPidFilePath],
+            ["--exec", "/bin/sh", "-c", script, "cloudrunner-stop", linuxPidFilePath],
             cancellationToken);
     }
 
@@ -231,15 +230,23 @@ internal static class WslRuntime
             await process.WaitForExitAsync(timeout.Token);
             return new CommandResult(process.ExitCode, await stdoutTask, await stderrTask);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             try
             {
-                process.Kill(entireProcessTree: true);
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
             }
             catch
             {
-                // Preserve the timeout error.
+                // Preserve the cancellation or timeout error.
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
 
             throw new TimeoutException("The WSL command did not finish within 20 seconds.");
