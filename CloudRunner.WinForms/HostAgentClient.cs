@@ -197,7 +197,8 @@ internal sealed record AgentCommand(
     string Command,
     string? Url = null,
     string? Sha256 = null,
-    string[]? Arguments = null);
+    string[]? Arguments = null,
+    string? Application = null);
 
 internal sealed record AgentReply(
     bool Success,
