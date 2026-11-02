@@ -6,13 +6,19 @@ namespace CloudRunner.HostAgent;
 internal sealed class ExecutionSession : IAsyncDisposable
 {
     private readonly ReleaseAssetDownloader _downloader = new();
+    private readonly LinuxReleaseAssetDownloader _linuxDownloader = new();
     private readonly string _jobsRoot = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "CloudRunner", "Jobs");
 
     private Process? _process;
+    private Process? _linuxProcess;
     private KillOnCloseJob? _job;
     private string? _jobDirectory;
+    private string? _linuxPidFileWslPath;
+    private HashSet<long>? _linuxPreviousWindows;
+    private long? _linuxWindowHandle;
+    private string? _linuxWindowTitle;
 
     public async Task<AgentResponse> StartAsync(
         string url,
@@ -22,9 +28,11 @@ internal sealed class ExecutionSession : IAsyncDisposable
     {
         CleanupExitedProcess();
 
-        if (_process is { HasExited: false })
+        if (HasActiveProcess())
         {
-            return CurrentProcessResponse("An EXE is already running. Stop it before starting another session.", success: false);
+            return CurrentActiveProcessResponse(
+                "An application is already running. Stop it before starting another session.",
+                success: false);
         }
 
         EnsureStandardUserContext();
@@ -91,7 +99,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
                 }
                 catch
                 {
-                    // Preserve the original launch/download error.
+                    // Preserve the original download or launch error.
                 }
 
                 _process.Dispose();
@@ -105,14 +113,148 @@ internal sealed class ExecutionSession : IAsyncDisposable
         }
     }
 
+    public async Task<AgentResponse> StartLinuxAsync(
+        string url,
+        string sha256,
+        string[] arguments,
+        CancellationToken cancellationToken)
+    {
+        CleanupExitedProcess();
+
+        if (HasActiveProcess())
+        {
+            return CurrentActiveProcessResponse(
+                "An application is already running. Stop it before starting another session.",
+                success: false);
+        }
+
+        EnsureStandardUserContext();
+        ValidateArguments(arguments);
+
+        var environmentSummary = await WslRuntime.GetEnvironmentSummaryAsync(cancellationToken);
+
+        Directory.CreateDirectory(_jobsRoot);
+        _jobDirectory = Path.Combine(_jobsRoot, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_jobDirectory);
+
+        try
+        {
+            var extension = Uri.TryCreate(url, UriKind.Absolute, out var assetUri)
+                ? Path.GetExtension(assetUri.AbsolutePath)
+                : string.Empty;
+            var appImage = extension.Equals(".AppImage", StringComparison.OrdinalIgnoreCase);
+            var linuxAssetPath = Path.Combine(
+                _jobDirectory,
+                appImage ? "application.AppImage" : "application.elf");
+            var pidFilePath = Path.Combine(_jobDirectory, "application.pid");
+
+            var verifiedHash = await _linuxDownloader.DownloadAndVerifyAsync(
+                url, sha256, linuxAssetPath, cancellationToken);
+
+            var linuxExecutablePath = await WslRuntime.ConvertWindowsPathAsync(
+                linuxAssetPath, cancellationToken);
+            _linuxPidFileWslPath = await WslRuntime.ConvertWindowsPathAsync(
+                pidFilePath, cancellationToken);
+
+            await WslRuntime.MakeExecutableAsync(linuxExecutablePath, cancellationToken);
+
+            _linuxPreviousWindows = WslRuntime.SnapshotVisibleWindows();
+            _linuxWindowHandle = null;
+            _linuxWindowTitle = null;
+
+            _linuxProcess = WslRuntime.StartLinuxApplication(
+                linuxExecutablePath,
+                _linuxPidFileWslPath,
+                arguments,
+                appImage);
+
+            (long Handle, string Title)? window = null;
+            for (var attempt = 0; attempt < 40; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                window = WslRuntime.FindNewVisibleWindow(_linuxPreviousWindows);
+                if (window.HasValue || _linuxProcess.HasExited)
+                {
+                    break;
+                }
+
+                await Task.Delay(250, cancellationToken);
+            }
+
+            if (window.HasValue)
+            {
+                _linuxWindowHandle = window.Value.Handle;
+                _linuxWindowTitle = window.Value.Title;
+            }
+
+            if (_linuxProcess.HasExited && !window.HasValue)
+            {
+                var exitCode = _linuxProcess.ExitCode;
+                throw new InvalidOperationException(
+                    $"The Linux application exited during startup (WSL session exit code {exitCode}). " +
+                    "Check that its Linux libraries are installed. For AppImage files, CloudRunner enables extract-and-run mode, but some AppImages still require additional packages.");
+            }
+
+            var message = window.HasValue
+                ? "Linux application started in WSLg. Its new desktop window is ready for capture."
+                : "Linux application started in WSLg, but no new desktop window was detected yet. Use Refresh process / window status after it finishes opening.";
+
+            return new AgentResponse(
+                true,
+                $"{environmentSummary} {message} SHA-256: {verifiedHash}",
+                _linuxProcess.Id,
+                _linuxWindowHandle,
+                _linuxWindowTitle);
+        }
+        catch
+        {
+            if (_linuxProcess is not null)
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(_linuxPidFileWslPath))
+                    {
+                        using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await WslRuntime.StopLinuxProcessGroupAsync(
+                            _linuxPidFileWslPath, force: true, stopTimeout.Token);
+                    }
+                }
+                catch
+                {
+                    // Fall back to terminating the WSL launcher below.
+                }
+
+                try
+                {
+                    if (!_linuxProcess.HasExited)
+                    {
+                        _linuxProcess.Kill(entireProcessTree: true);
+                        await _linuxProcess.WaitForExitAsync(CancellationToken.None);
+                    }
+                }
+                catch
+                {
+                    // Preserve the original Linux download or launch error.
+                }
+
+                _linuxProcess.Dispose();
+                _linuxProcess = null;
+            }
+
+            ResetLinuxWindowState();
+            DeleteJobDirectory();
+            throw;
+        }
+    }
 
     public async Task<AgentResponse> StartTestWindowAsync(CancellationToken cancellationToken)
     {
         CleanupExitedProcess();
 
-        if (_process is { HasExited: false })
+        if (HasActiveProcess())
         {
-            return CurrentProcessResponse(
+            return CurrentActiveProcessResponse(
                 "An application is already running. Stop it before starting the capture test.",
                 success: false);
         }
@@ -188,16 +330,26 @@ internal sealed class ExecutionSession : IAsyncDisposable
     {
         CleanupExitedProcess();
 
-        if (_process is null)
+        if (_process is not null)
         {
-            return new AgentResponse(true, "No CloudRunner application is running.");
+            return CurrentProcessResponse("Windows application is running.");
         }
 
-        return CurrentProcessResponse("Application is running.");
+        if (_linuxProcess is not null)
+        {
+            return CurrentLinuxProcessResponse("Linux application is running in WSL.");
+        }
+
+        return new AgentResponse(true, "No CloudRunner application is running.");
     }
 
     public async Task<AgentResponse> StopAsync()
     {
+        if (_linuxProcess is not null)
+        {
+            return await StopLinuxAsync();
+        }
+
         if (_process is null)
         {
             _job?.Dispose();
@@ -235,6 +387,78 @@ internal sealed class ExecutionSession : IAsyncDisposable
             _process = null;
             _job?.Dispose();
             _job = null;
+            DeleteJobDirectory();
+        }
+    }
+
+    private async Task<AgentResponse> StopLinuxAsync()
+    {
+        var process = _linuxProcess!;
+        var processId = process.Id;
+        var stopMessage = "Linux application process group stopped.";
+
+        try
+        {
+            if (!process.HasExited && !string.IsNullOrWhiteSpace(_linuxPidFileWslPath))
+            {
+                using var gracefulTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await WslRuntime.StopLinuxProcessGroupAsync(
+                    _linuxPidFileWslPath, force: false, gracefulTimeout.Token);
+
+                using var waitTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await process.WaitForExitAsync(waitTimeout.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    using var forceTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    await WslRuntime.StopLinuxProcessGroupAsync(
+                        _linuxPidFileWslPath, force: true, forceTimeout.Token);
+
+                    using var finalTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    try
+                    {
+                        await process.WaitForExitAsync(finalTimeout.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        process.Kill(entireProcessTree: true);
+                        await process.WaitForExitAsync(CancellationToken.None);
+                        stopMessage = "Linux application was force-stopped after it did not respond to termination.";
+                    }
+                }
+            }
+            else if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+
+            return new AgentResponse(true, stopMessage, processId);
+        }
+        catch (Exception ex)
+        {
+            return new AgentResponse(false, "Could not stop the WSL application cleanly: " + ex.Message, processId);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    // Best-effort cleanup on Stop.
+                }
+            }
+
+            process.Dispose();
+            _linuxProcess = null;
+            ResetLinuxWindowState();
             DeleteJobDirectory();
         }
     }
@@ -291,8 +515,91 @@ internal sealed class ExecutionSession : IAsyncDisposable
         }
     }
 
+    private AgentResponse CurrentLinuxProcessResponse(string message, bool success = true)
+    {
+        if (_linuxProcess is null)
+        {
+            return new AgentResponse(true, message);
+        }
+
+        try
+        {
+            if (_linuxPreviousWindows is not null)
+            {
+                var discovered = WslRuntime.FindNewVisibleWindow(_linuxPreviousWindows);
+                if (discovered.HasValue)
+                {
+                    _linuxWindowHandle = discovered.Value.Handle;
+                    _linuxWindowTitle = discovered.Value.Title;
+                }
+            }
+
+            if (_linuxProcess.HasExited)
+            {
+                return new AgentResponse(
+                    false,
+                    "The WSL application process has exited.",
+                    _linuxProcess.Id,
+                    _linuxWindowHandle,
+                    _linuxWindowTitle,
+                    _linuxProcess.ExitCode);
+            }
+
+            return new AgentResponse(
+                success,
+                message,
+                _linuxProcess.Id,
+                _linuxWindowHandle,
+                _linuxWindowTitle);
+        }
+        catch (InvalidOperationException)
+        {
+            return new AgentResponse(true, "Linux application is no longer running.");
+        }
+    }
+
+    private AgentResponse CurrentActiveProcessResponse(string message, bool success = true)
+    {
+        if (_process is not null)
+        {
+            return CurrentProcessResponse(message, success);
+        }
+
+        if (_linuxProcess is not null)
+        {
+            return CurrentLinuxProcessResponse(message, success);
+        }
+
+        return new AgentResponse(success, message);
+    }
+
+    private bool HasActiveProcess() =>
+        (_process is not null && !_process.HasExited) ||
+        (_linuxProcess is not null && !_linuxProcess.HasExited);
+
     private void CleanupExitedProcess()
     {
+        if (_linuxProcess is not null)
+        {
+            try
+            {
+                if (!_linuxProcess.HasExited)
+                {
+                    goto CheckWindowsProcess;
+                }
+            }
+            catch
+            {
+                // Treat an inaccessible or invalid process handle as exited.
+            }
+
+            _linuxProcess.Dispose();
+            _linuxProcess = null;
+            ResetLinuxWindowState();
+            DeleteJobDirectory();
+        }
+
+    CheckWindowsProcess:
         if (_process is null)
         {
             return;
@@ -315,6 +622,14 @@ internal sealed class ExecutionSession : IAsyncDisposable
         _job?.Dispose();
         _job = null;
         DeleteJobDirectory();
+    }
+
+    private void ResetLinuxWindowState()
+    {
+        _linuxPidFileWslPath = null;
+        _linuxPreviousWindows = null;
+        _linuxWindowHandle = null;
+        _linuxWindowTitle = null;
     }
 
     private void DeleteJobDirectory()
@@ -345,7 +660,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
         if (principal.IsInRole(WindowsBuiltInRole.Administrator))
         {
             throw new InvalidOperationException(
-                "CloudRunner will not launch downloaded EXEs from an elevated Administrator session. " +
+                "CloudRunner will not launch downloaded applications from an elevated Administrator session. " +
                 "Close CloudRunner and restart it as a standard, non-elevated user.");
         }
     }
