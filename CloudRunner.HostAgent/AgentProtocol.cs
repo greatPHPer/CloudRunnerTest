@@ -4,7 +4,8 @@ internal sealed record AgentRequest(
     string Command,
     string? Url = null,
     string? Sha256 = null,
-    string[]? Arguments = null);
+    string[]? Arguments = null,
+    string? Application = null);
 
 internal sealed record AgentResponse(
     bool Success,
