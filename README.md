@@ -111,6 +111,19 @@ The WSL Linux runtime prototype adds a Linux section to the WinForms client. It 
 
 Microsoft's WSLg documentation: https://learn.microsoft.com/en-us/windows/wsl/tutorials/gui-apps
 
+### Test WSLg window capture
+
+1. Open Ubuntu from the Start menu and run:
+
+       sudo apt update
+       sudo apt install -y x11-apps
+
+2. Start CloudRunner as a standard, non-elevated Windows user.
+3. Scroll to **RUN A LINUX GUI APPLICATION (WSL2)** and click **Check WSL2 / WSLg readiness**.
+4. Click **Launch WSLg test app (xeyes)**. A small Linux GUI window should appear on the Windows desktop.
+5. Click **Capture application window** for one frame, or **Start live preview** to send frames into WebView2.
+6. Click **Stop application** to terminate the Linux process group.
+
 ### Run a Linux asset
 
 1. Start CloudRunner as a standard, non-elevated Windows user.
