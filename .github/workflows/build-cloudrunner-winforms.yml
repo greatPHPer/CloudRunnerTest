@@ -2,6 +2,9 @@ name: Build CloudRunner WinForms
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/wsl-linux-runtime
 
 permissions:
   contents: read
