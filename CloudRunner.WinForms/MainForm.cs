@@ -49,6 +49,8 @@ internal sealed class MainForm : Form
 
     private const int SwRestore = 9;
     private bool _webViewReady;
+    private bool _webMessageHandlerAttached;
+    private bool _remoteInputAllowed;
     private bool _shutdownInProgress;
     private bool _allowClose;
 
@@ -321,6 +323,7 @@ internal sealed class MainForm : Form
             _preview.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _preview.CoreWebView2.Settings.AreDevToolsEnabled = false;
             _preview.CoreWebView2.Settings.IsStatusBarEnabled = false;
+            AttachWebMessageHandler();
             ShowWelcomePage();
             Log("WebView2 initialized.");
         }
@@ -330,6 +333,79 @@ internal sealed class MainForm : Form
             MessageBox.Show(this,
                 "Microsoft Edge WebView2 Runtime is required. Install the Evergreen WebView2 Runtime and reopen CloudRunner.\r\n\r\n" + ex.Message,
                 "WebView2 unavailable", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void AttachWebMessageHandler()
+    {
+        if (_webMessageHandlerAttached || _preview.CoreWebView2 is not { } core)
+        {
+            return;
+        }
+
+        core.WebMessageReceived += Preview_WebMessageReceived;
+        _webMessageHandlerAttached = true;
+    }
+
+    private void Preview_WebMessageReceived(
+        object? sender,
+        CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        try
+        {
+            var raw = e.TryGetWebMessageAsString();
+            if (string.IsNullOrWhiteSpace(raw) || raw.Length > 4096)
+            {
+                return;
+            }
+
+            using var document = JsonDocument.Parse(raw);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("type", out var typeElement) ||
+                typeElement.ValueKind != JsonValueKind.String)
+            {
+                return;
+            }
+
+            switch (typeElement.GetString())
+            {
+                case "allow-remote-control":
+                {
+                    var enabled = root.TryGetProperty("enabled", out var enabledElement) &&
+                                  enabledElement.ValueKind == JsonValueKind.True;
+                    _remoteInputAllowed = enabled && _activeWindowHandle is > 0;
+                    if (!_remoteInputAllowed)
+                    {
+                        RemoteInputService.ReleaseAll();
+                    }
+
+                    Log(_remoteInputAllowed
+                        ? "Remote mouse and keyboard control ENABLED by the host."
+                        : "Remote mouse and keyboard control disabled.");
+                    break;
+                }
+
+                case "remote-input":
+                {
+                    if (!_remoteInputAllowed || _activeWindowHandle is not long hwnd || hwnd == 0 ||
+                        !root.TryGetProperty("payload", out var payload))
+                    {
+                        return;
+                    }
+
+                    if (!RemoteInputService.TryHandle(new IntPtr(hwnd), payload, out var error) &&
+                        !string.IsNullOrWhiteSpace(error))
+                    {
+                        Log("Remote input rejected: " + error);
+                    }
+
+                    break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("Remote input message error: " + ex.Message);
         }
     }
 
@@ -725,8 +801,8 @@ internal sealed class MainForm : Form
                       <div id="host-label">HOST · LOCAL CAPTURE</div>
                     </section>
                     <aside id="panel">
-                      <h2>Remote viewing</h2>
-                      <p>Experimental, video-only WebRTC. Start live preview, create an offer, and exchange the text with one trusted viewer.</p>
+                      <h2>Remote viewing &amp; control</h2>
+                      <p>Experimental one-viewer WebRTC. Start live preview, create an offer, and exchange the text with one trusted viewer.</p>
                       <button id="create-offer">1. Create viewer offer</button>
                       <label for="offer">Host offer (copy this to the viewer)</label>
                       <textarea id="offer" spellcheck="false" readonly placeholder="Create an offer first…"></textarea>
@@ -735,12 +811,13 @@ internal sealed class MainForm : Form
                       <textarea id="answer" spellcheck="false" placeholder="Paste the answer received from the viewer…"></textarea>
                       <button id="apply-answer">2. Apply answer / connect</button>
                       <p id="peer-status" role="status">No remote viewer connected.</p>
+                      <label><input id="allow-remote-control" type="checkbox" disabled> Allow this connected viewer to control the application</label>
                       <label for="peer-diagnostics">Connection diagnostics (copyable)</label>
                       <textarea id="peer-diagnostics" readonly spellcheck="false" style="min-height:110px" placeholder="WebRTC diagnostics will appear here…"></textarea>
                       <button id="copy-peer-diagnostics" class="secondary">Copy connection diagnostics</button>
                       <button id="end-session" class="danger">End remote session</button>
                       <p class="small">This prototype uses a public STUN server and manual offer/answer exchange. Some networks require a TURN relay and may not connect.</p>
-                      <div class="warning">Share the offer only with a person you trust. It contains connection details and allows its recipient to view the application window while the session is active. No mouse or keyboard control is exposed.</div>
+                      <div class="warning">Share the offer only with a person you trust. Anyone who completes the exchange can view the application. Remote input is off by default and requires this host checkbox AND the viewer's control toggle. Mouse, keyboard and typed text are sent to the active application only while both are enabled. Do not enable it for untrusted viewers.</div>
                     </aside>
                   </div>
                   <script>
@@ -757,6 +834,20 @@ internal sealed class MainForm : Form
                       let peerConnection = null;
                       let outboundStream = null;
                       let peerStatsTimer = null;
+                      let controlChannel = null;
+                      const allowControlToggle = document.getElementById('allow-remote-control');
+
+                      function postHostMessage(message) {
+                        try { window.chrome.webview.postMessage(JSON.stringify(message)); }
+                        catch { /* WebRTC viewing can continue if the local bridge is unavailable. */ }
+                      }
+
+                      allowControlToggle.addEventListener('change', () => {
+                        postHostMessage({ type: 'allow-remote-control', enabled: allowControlToggle.checked });
+                        setStatus(allowControlToggle.checked
+                          ? 'Remote control allowed by the host. The viewer must also enable control.'
+                          : 'Remote control disabled by the host.');
+                      });
 
                       function setStatus(message) {
                         status.textContent = message;
@@ -849,6 +940,16 @@ internal sealed class MainForm : Form
                           peerConnection.close();
                           peerConnection = null;
                         }
+                        if (controlChannel) {
+                          controlChannel.onopen = null;
+                          controlChannel.onclose = null;
+                          controlChannel.onmessage = null;
+                          controlChannel.close();
+                          controlChannel = null;
+                        }
+                        allowControlToggle.checked = false;
+                        allowControlToggle.disabled = true;
+                        postHostMessage({ type: 'allow-remote-control', enabled: false });
                         if (outboundStream) {
                           outboundStream.getTracks().forEach(track => track.stop());
                           outboundStream = null;
@@ -894,6 +995,26 @@ internal sealed class MainForm : Form
                             ]
                           });
                           peerConnection = pc;
+                          controlChannel = pc.createDataChannel('cloudrunner-control', { ordered: true });
+                          controlChannel.onopen = () => {
+                            allowControlToggle.disabled = false;
+                            setStatus('Viewer connected. Remote control remains disabled until the host and viewer both enable it.');
+                          };
+                          controlChannel.onclose = () => {
+                            allowControlToggle.checked = false;
+                            allowControlToggle.disabled = true;
+                            postHostMessage({ type: 'allow-remote-control', enabled: false });
+                            setStatus('Remote input channel closed.');
+                          };
+                          controlChannel.onmessage = event => {
+                            if (!allowControlToggle.checked) return;
+                            try {
+                              const payload = JSON.parse(event.data);
+                              postHostMessage({ type: 'remote-input', payload });
+                            } catch {
+                              setStatus('Ignored an invalid remote input message.');
+                            }
+                          };
                           outboundStream = canvas.captureStream(5);
                           outboundStream.getTracks().forEach(track => {
                             pc.addTrack(track, outboundStream);
