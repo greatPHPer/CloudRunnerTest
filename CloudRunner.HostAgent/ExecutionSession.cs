@@ -248,6 +248,121 @@ internal sealed class ExecutionSession : IAsyncDisposable
         }
     }
 
+    public async Task<AgentResponse> StartLinuxTestAppAsync(CancellationToken cancellationToken)
+    {
+        CleanupExitedProcess();
+
+        if (HasActiveProcess())
+        {
+            return CurrentActiveProcessResponse(
+                "An application is already running. Stop it before starting another session.",
+                success: false);
+        }
+
+        EnsureStandardUserContext();
+        var environmentSummary = await WslRuntime.GetEnvironmentSummaryAsync(cancellationToken);
+        await WslRuntime.EnsureExecutableExistsAsync(
+            "/usr/bin/xeyes",
+            "sudo apt update && sudo apt install -y x11-apps",
+            cancellationToken);
+
+        Directory.CreateDirectory(_jobsRoot);
+        _jobDirectory = Path.Combine(_jobsRoot, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_jobDirectory);
+
+        try
+        {
+            var pidFilePath = Path.Combine(_jobDirectory, "linux-test.pid");
+            _linuxPidFileWslPath = await WslRuntime.ConvertWindowsPathAsync(
+                pidFilePath, cancellationToken);
+            _linuxPreviousWindows = WslRuntime.SnapshotVisibleWindows();
+            _linuxWindowHandle = null;
+            _linuxWindowTitle = null;
+
+            _linuxProcess = WslRuntime.StartLinuxApplication(
+                "/usr/bin/xeyes",
+                _linuxPidFileWslPath,
+                [],
+                isAppImage: false);
+
+            (long Handle, string Title)? window = null;
+            for (var attempt = 0; attempt < 40; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                window = WslRuntime.FindNewVisibleWindow(_linuxPreviousWindows);
+                if (window.HasValue || _linuxProcess.HasExited)
+                {
+                    break;
+                }
+
+                await Task.Delay(250, cancellationToken);
+            }
+
+            if (window.HasValue)
+            {
+                _linuxWindowHandle = window.Value.Handle;
+                _linuxWindowTitle = window.Value.Title;
+            }
+
+            if (_linuxProcess.HasExited && !window.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"The xeyes test application exited during startup (WSL session exit code {_linuxProcess.ExitCode}).");
+            }
+
+            var message = window.HasValue
+                ? "The WSLg xeyes test window is ready for WebView2 capture."
+                : "The xeyes process started, but no new desktop window was detected yet. Refresh process / window status.";
+
+            return new AgentResponse(
+                true,
+                $"{environmentSummary} {message}",
+                _linuxProcess.Id,
+                _linuxWindowHandle,
+                _linuxWindowTitle);
+        }
+        catch
+        {
+            if (_linuxProcess is not null)
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(_linuxPidFileWslPath))
+                    {
+                        using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await WslRuntime.StopLinuxProcessGroupAsync(
+                            _linuxPidFileWslPath, force: true, stopTimeout.Token);
+                    }
+                }
+                catch
+                {
+                    // Fall back to terminating the WSL launcher below.
+                }
+
+                try
+                {
+                    if (!_linuxProcess.HasExited)
+                    {
+                        _linuxProcess.Kill(entireProcessTree: true);
+                        await _linuxProcess.WaitForExitAsync(CancellationToken.None);
+                    }
+                }
+                catch
+                {
+                    // Preserve the original startup error.
+                }
+
+                _linuxProcess.Dispose();
+                _linuxProcess = null;
+            }
+
+            ResetLinuxWindowState();
+            DeleteJobDirectory();
+            throw;
+        }
+    }
+
     public async Task<AgentResponse> StartTestWindowAsync(CancellationToken cancellationToken)
     {
         CleanupExitedProcess();
