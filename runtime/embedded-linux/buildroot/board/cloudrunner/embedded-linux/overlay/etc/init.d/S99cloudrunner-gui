@@ -1,0 +1,75 @@
+#!/bin/sh
+
+# Start the guest X server and the selected CloudRunner test application.
+# The app is selected by the cloudrunner.app= kernel command-line argument.
+
+start() {
+    mkdir -p /tmp/.X11-unix /var/log
+    export HOME=/root
+    export DISPLAY=:0
+
+    echo "[CloudRunner] Starting Xorg on display :0"
+    /usr/bin/Xorg :0 -noreset -nolisten tcp -ac \
+        -logfile /var/log/Xorg.0.log >/var/log/cloudrunner-xorg.out 2>&1 &
+    xorg_pid=$!
+
+    tries=0
+    while [ ! -S /tmp/.X11-unix/X0 ]; do
+        if ! kill -0 "$xorg_pid" 2>/dev/null; then
+            echo "[CloudRunner] Xorg exited before creating its display socket."
+            cat /var/log/Xorg.0.log 2>/dev/null
+            return 1
+        fi
+        tries=$((tries + 1))
+        if [ "$tries" -ge 30 ]; then
+            echo "[CloudRunner] Timed out waiting for Xorg."
+            cat /var/log/Xorg.0.log 2>/dev/null
+            return 1
+        fi
+        sleep 1
+    done
+
+    app=$(sed -n 's/.*cloudrunner\.app=\([^ ]*\).*/\1/p' /proc/cmdline)
+    case "$app" in
+        xeyes)
+            echo "[CloudRunner] Launching xeyes."
+            /usr/bin/xeyes -geometry 420x300+80+80 >/var/log/cloudrunner-app.log 2>&1 &
+            ;;
+        xterm)
+            echo "[CloudRunner] Launching xterm."
+            /usr/bin/xterm -title "CloudRunner Embedded Linux - xterm" \
+                -geometry 90x28 -e /bin/sh -c \
+                'printf "CloudRunner embedded Linux is ready. Type here and press Enter.\n\n"; exec cat' \
+                >/var/log/cloudrunner-app.log 2>&1 &
+            ;;
+        *)
+            echo "[CloudRunner] Unknown app '$app'; defaulting to xterm."
+            /usr/bin/xterm -title "CloudRunner Embedded Linux - xterm" \
+                -geometry 90x28 -e /bin/sh -c 'exec cat' \
+                >/var/log/cloudrunner-app.log 2>&1 &
+            ;;
+    esac
+}
+
+stop() {
+    killall xterm xeyes Xorg 2>/dev/null || true
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+        ;;
+esac
+
+exit 0
