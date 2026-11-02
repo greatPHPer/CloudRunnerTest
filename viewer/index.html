@@ -147,6 +147,97 @@
     }
   }
 
+  // Some WSLg/DXGI captures contain a desktop-sized frame with the
+  // application window centred inside it. Do not treat the surrounding
+  // black desktop area as part of the remotely controllable application.
+  const pointerBoundsCanvas = document.createElement('canvas');
+  pointerBoundsCanvas.width = 120;
+  pointerBoundsCanvas.height = 68;
+  const pointerBoundsContext = pointerBoundsCanvas.getContext('2d', { willReadFrequently: true });
+  let cachedPointerBounds = null;
+  let pointerBoundsUpdatedAt = 0;
+
+  function getVisibleVideoBounds() {
+    const fullBounds = { left: 0, top: 0, right: 1, bottom: 1 };
+    if (!video.videoWidth || !video.videoHeight || !pointerBoundsContext) return fullBounds;
+
+    const now = performance.now();
+    if (cachedPointerBounds && now - pointerBoundsUpdatedAt < 500) {
+      return cachedPointerBounds;
+    }
+
+    try {
+      pointerBoundsContext.drawImage(
+        video, 0, 0, pointerBoundsCanvas.width, pointerBoundsCanvas.height);
+      const pixels = pointerBoundsContext.getImageData(
+        0, 0, pointerBoundsCanvas.width, pointerBoundsCanvas.height).data;
+
+      // Estimate the letterbox/desktop background from the four image corners.
+      const cornerPoints = [
+        [2, 2], [pointerBoundsCanvas.width - 3, 2],
+        [2, pointerBoundsCanvas.height - 3],
+        [pointerBoundsCanvas.width - 3, pointerBoundsCanvas.height - 3]
+      ];
+      const background = [0, 0, 0];
+      for (const [x, y] of cornerPoints) {
+        const index = (y * pointerBoundsCanvas.width + x) * 4;
+        background[0] += pixels[index];
+        background[1] += pixels[index + 1];
+        background[2] += pixels[index + 2];
+      }
+      for (let channel = 0; channel < 3; channel++) background[channel] /= cornerPoints.length;
+
+      const activeRows = [];
+      const activeColumns = [];
+      for (let y = 0; y < pointerBoundsCanvas.height; y++) {
+        let count = 0;
+        for (let x = 0; x < pointerBoundsCanvas.width; x++) {
+          const index = (y * pointerBoundsCanvas.width + x) * 4;
+          const difference = Math.abs(pixels[index] - background[0]) +
+            Math.abs(pixels[index + 1] - background[1]) +
+            Math.abs(pixels[index + 2] - background[2]);
+          if (difference > 75) count++;
+        }
+        if (count >= 3) activeRows.push(y);
+      }
+
+      for (let x = 0; x < pointerBoundsCanvas.width; x++) {
+        let count = 0;
+        for (let y = 0; y < pointerBoundsCanvas.height; y++) {
+          const index = (y * pointerBoundsCanvas.width + x) * 4;
+          const difference = Math.abs(pixels[index] - background[0]) +
+            Math.abs(pixels[index + 1] - background[1]) +
+            Math.abs(pixels[index + 2] - background[2]);
+          if (difference > 75) count++;
+        }
+        if (count >= 2) activeColumns.push(x);
+      }
+
+      if (activeRows.length < 5 || activeColumns.length < 5) {
+        cachedPointerBounds = fullBounds;
+      } else {
+        const left = Math.max(0, (Math.min(...activeColumns) - 1) / pointerBoundsCanvas.width);
+        const right = Math.min(1, (Math.max(...activeColumns) + 2) / pointerBoundsCanvas.width);
+        const top = Math.max(0, (Math.min(...activeRows) - 1) / pointerBoundsCanvas.height);
+        const bottom = Math.min(1, (Math.max(...activeRows) + 2) / pointerBoundsCanvas.height);
+
+        // If the application fills almost the entire frame, keep the normal
+        // full-frame mapping. This also avoids overfitting to dark UI details.
+        cachedPointerBounds = right - left < 0.92 || bottom - top < 0.92
+          ? { left, top, right, bottom }
+          : fullBounds;
+      }
+
+      pointerBoundsUpdatedAt = now;
+      return cachedPointerBounds;
+    } catch {
+      // Keep standard full-frame input if browser video sampling is unavailable.
+      cachedPointerBounds = fullBounds;
+      pointerBoundsUpdatedAt = now;
+      return fullBounds;
+    }
+  }
+
   function getVideoPoint(event) {
     if (!video.videoWidth || !video.videoHeight) return null;
     const rect = video.getBoundingClientRect();
@@ -158,6 +249,14 @@
     const x = (event.clientX - left) / shownWidth;
     const y = (event.clientY - top) / shownHeight;
     if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+
+    const bounds = getVisibleVideoBounds();
+    if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) {
+      return null;
+    }
+
+    // Keep coordinates relative to the original capture frame. The host maps
+    // these directly to the captured HWND/desktop coordinates.
     return { x, y };
   }
 
