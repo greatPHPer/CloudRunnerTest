@@ -38,6 +38,9 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
     │   ├── WindowsCommandLineParser.cs
     │   ├── WindowCaptureService.cs
     │   └── RemoteInputService.cs
+    ├── runtime/embedded-linux
+    │   ├── README.md
+    │   └── buildroot/                 # pinned guest config, kernel fragment and X11 overlay
     └── CloudRunner.HostAgent
         ├── CloudRunner.HostAgent.csproj
         ├── Program.cs
@@ -48,9 +51,6 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
         ├── WslRuntime.cs
         ├── EmbeddedLinuxRuntime.cs
         └── ExecutionSession.cs
-    ├── runtime/embedded-linux
-    │   ├── README.md
-    │   └── buildroot/                 # pinned guest config, kernel fragment and X11 overlay
 
 ## Requirements
 
