@@ -581,40 +581,45 @@ internal sealed class ExecutionSession : IAsyncDisposable
     {
         if (_linuxProcess is not null)
         {
+            var linuxExited = false;
             try
             {
-                if (!_linuxProcess.HasExited)
-                {
-                    goto CheckWindowsProcess;
-                }
+                linuxExited = _linuxProcess.HasExited;
             }
             catch
             {
                 // Treat an inaccessible or invalid process handle as exited.
+                linuxExited = true;
             }
 
-            _linuxProcess.Dispose();
-            _linuxProcess = null;
-            ResetLinuxWindowState();
-            DeleteJobDirectory();
+            if (linuxExited)
+            {
+                _linuxProcess.Dispose();
+                _linuxProcess = null;
+                ResetLinuxWindowState();
+                DeleteJobDirectory();
+            }
         }
 
-    CheckWindowsProcess:
         if (_process is null)
         {
             return;
         }
 
+        var windowsExited = false;
         try
         {
-            if (!_process.HasExited)
-            {
-                return;
-            }
+            windowsExited = _process.HasExited;
         }
         catch
         {
             // Treat an inaccessible or invalid process handle as exited.
+            windowsExited = true;
+        }
+
+        if (!windowsExited)
+        {
+            return;
         }
 
         _process.Dispose();
