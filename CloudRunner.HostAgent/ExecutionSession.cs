@@ -292,7 +292,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
             _linuxProcess = WslRuntime.StartLinuxApplication(
                 "/usr/bin/xterm",
                 _linuxPidFileWslPath,
-                ["-T", "CloudRunner input test", "-geometry", "90x28"],
+                ["-T", "CloudRunner input test", "-geometry", "90x28", "-e", "/bin/sh", "-c", "cat >/dev/null"],
                 isAppImage: false);
 
             (long Handle, string Title)? window = null;
