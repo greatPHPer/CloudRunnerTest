@@ -12,7 +12,8 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - **Process lifecycle:** one application at a time, individual command-line arguments, Windows Job Object ownership with kill-on-close, stop the managed process tree and remove its temporary job directory.
 - **Window preview:** WgcSharp using Windows Graphics Capture first, with DXGI Desktop Duplication fallback, targeting the launched process's top-level HWND.
 - **Continuous preview:** sequential local frame capture, rendered in WebView2 without navigating/reloading the page for each frame; currently capped at about 5 frames per second.
-- **Cloud compute:** none.
+- **Experimental Linux compatibility:** downloads and verifies x86-64 ELF/AppImage assets, then launches them inside the user's default WSL 2 distribution using WSLg. Newly created visible desktop windows are passed to the existing capture pipeline.
+- **Cloud compute:** none. Windows and Linux applications run locally on the user's PC; WSL is not a remote cloud worker.
 - **Remote video streaming:** experimental one-viewer WebRTC prototype; video only, sourced from the local preview canvas at about 5 FPS, with manual offer/answer exchange.
 - **Remote pairing/signalling:** no signalling service yet; SDP is exchanged manually. STUN only; no TURN relay.
 
@@ -39,6 +40,8 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
         ├── AgentProtocol.cs
         ├── AgentServer.cs
         ├── ReleaseAssetDownloader.cs
+        ├── LinuxReleaseAssetDownloader.cs
+        ├── WslRuntime.cs
         └── ExecutionSession.cs
 
 ## Requirements
@@ -47,7 +50,8 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - .NET 10 SDK to build.
 - Microsoft Edge WebView2 Evergreen Runtime.
 - A Windows 10/11 x64 machine with a compatible Direct3D 11 graphics device for window capture.
-- CloudRunner should be started as a standard, non-elevated user for downloaded EXE execution.
+- **Linux GUI support:** Windows 10 build 19044 or later (or Windows 11), WSL 2, WSLg, and a regular non-root default user in the Linux distribution.
+- CloudRunner should be started as a standard, non-elevated Windows user for downloaded application execution.
 
 ## Build
 
@@ -85,9 +89,46 @@ For a release EXE:
 4. Click **Download, verify and run EXE**.
 5. Capture its window after the HostAgent reports a non-zero HWND.
 
+## Experimental Linux GUI execution through WSLg
+
+The WSL Linux runtime prototype adds a Linux section to the WinForms client. It does not require a Linux cloud VM: the Linux program runs in the user's own WSL 2 distribution on the same Windows PC.
+
+### One-time Windows setup
+
+1. Check the Windows version with winver. WSLg GUI applications require Windows 10 build 19044 or later, or Windows 11.
+2. Open PowerShell as Administrator and run:
+
+       wsl --install -d Ubuntu
+
+3. Restart Windows if requested. Launch Ubuntu from the Start menu and create a regular Linux username and password. Do not configure the default WSL user as root.
+4. In PowerShell, run:
+
+       wsl --update
+       wsl --shutdown
+       wsl --list --verbose
+
+   Confirm that the Ubuntu distribution uses WSL version 2. Start Ubuntu once after the shutdown command so it can initialize again.
+
+Microsoft's WSLg documentation: https://learn.microsoft.com/en-us/windows/wsl/tutorials/gui-apps
+
+### Run a Linux asset
+
+1. Start CloudRunner as a standard, non-elevated Windows user.
+2. Scroll to **RUN A LINUX GUI APPLICATION (WSL2)**.
+3. Click **Check WSL2 / WSLg readiness**. The status must report a distribution, a non-root Linux UID, and a GUI display.
+4. Paste a direct GitHub Release asset URL for an x86-64 Linux ELF executable or x86-64 AppImage.
+5. Enter the publisher-provided SHA-256 and optional Linux arguments.
+6. Click **Download, verify and run Linux app**. CloudRunner downloads to its local per-session folder, verifies the ELF architecture and SHA-256, marks the file executable in WSL, and launches it in a separate Linux process group.
+7. CloudRunner looks for the new desktop window and uses the existing one-frame / continuous preview buttons to display it in WebView2.
+8. Click **Stop application** to stop the Linux process group and remove the temporary download folder.
+
+This first milestone supports **x86-64 ELF, AppImage, .bin, .elf and .run assets** from direct HTTPS GitHub Release URLs, up to 100 MB. It is not a general-purpose Linux package manager: .deb, .rpm, tar archives, ARM binaries, and dependency installation are not supported yet. AppImages are launched with extract-and-run enabled, but some still require libraries installed in the Ubuntu distribution.
+
+This is a local compatibility prototype, not remote execution. WSLg displays Linux GUI windows on the Windows desktop; CloudRunner then captures the corresponding Windows desktop window. Some Linux apps may not create a capturable top-level window, may launch child processes that outlive their launcher, or may require additional dependencies. Those cases need compatibility work.
+
 ## Execution security
 
-CloudRunner is a launcher, not a malware sandbox.
+CloudRunner is a launcher, not a malware sandbox. This also applies to Linux applications launched in WSL: they run with the permissions of the default WSL Linux user and may access files exposed through WSL mounts. A matching checksum verifies bytes, not software safety.
 
 - Only direct HTTPS GitHub Release asset URLs are accepted.
 - Redirects are limited to HTTPS GitHub release asset hosts.
@@ -99,6 +140,7 @@ CloudRunner is a launcher, not a malware sandbox.
 - The launched process is assigned to a Windows Job Object configured to terminate assigned processes when the HostAgent exits.
 - The capture test uses a bundled, standalone WinForms window so the reported process owns the HWND; it does not depend on the Windows Notepad launcher.
 - Only one managed process is supported in this phase.
+- The WSL Linux prototype accepts only direct HTTPS GitHub Release URLs and checks the ELF file type, x86-64 architecture, maximum size and expected SHA-256 before launch.
 
 **A matching SHA-256 proves file integrity against the checksum supplied by the user; it does not prove that the software is safe.** Run only software from publishers you trust. A standard Windows user token still has access to that user's data and credentials.
 
@@ -168,8 +210,10 @@ The experimental viewer already uses direct WebRTC peer-to-peer video when netwo
 
 ## Development roadmap
 
-1. **Phase 1:** local HostAgent, verified download and process lifecycle.
-2. **Phase 2:** continuous local window-frame capture and WebView2 rendering (initial implementation is present; performance and compatibility testing remain).
-3. **Phase 3:** experimental video-only WebRTC peer-to-peer prototype (manual SDP exchange is now present; cross-network compatibility testing remains).
-4. **Phase 4:** signalling/pairing, viewer authentication, TURN strategy, quotas and abuse controls; remote input remains disabled until a separate security review.
-5. **Phase 5:** review hardening, installer, public documentation and publisher trust/safety workflow.
+1. **Phase 1:** local Windows HostAgent, verified EXE download and process lifecycle.
+2. **Phase 2:** continuous local window-frame capture and WebView2 rendering.
+3. **Phase 3:** experimental video-only WebRTC peer-to-peer prototype.
+4. **Phase 4:** WSL2/WSLg Linux ELF and AppImage compatibility prototype; dependency and GUI-window compatibility testing remains.
+5. **Phase 5:** signalling/pairing, viewer authentication, TURN strategy, quotas and abuse controls; remote input remains disabled until a separate security review.
+6. **Phase 6:** macOS compatibility research (Darling / Darwin_Computa are experimental and are not integrated yet).
+7. **Phase 7:** review hardening, installer, public documentation and publisher trust/safety workflow.
