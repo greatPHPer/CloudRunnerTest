@@ -13,6 +13,11 @@ internal sealed class MainForm : Form
     private readonly TextBox _urlInput = new();
     private readonly TextBox _shaInput = new();
     private readonly TextBox _argumentsInput = new();
+    private readonly TextBox _linuxUrlInput = new();
+    private readonly TextBox _linuxShaInput = new();
+    private readonly TextBox _linuxArgumentsInput = new();
+    private readonly Button _wslStatusButton = new();
+    private readonly Button _linuxRunButton = new();
     private readonly Label _status = new();
     private readonly Label _windowInfo = new();
     private readonly Button _runButton = new();
@@ -48,7 +53,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "CloudRunner – Local Windows Runner";
+        Text = "CloudRunner – Windows + Linux Runner";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(1100, 720);
         Size = new Size(1450, 900);
@@ -81,7 +86,7 @@ internal sealed class MainForm : Form
         });
         header.Controls.Add(new Label
         {
-            Text = "Run on this Windows PC · Verify releases · Preview the application window",
+            Text = "Run Windows EXEs or Linux GUI applications through WSLg · Preview in WebView2",
             Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(174, 190, 210)
         });
@@ -186,6 +191,36 @@ internal sealed class MainForm : Form
                    "This is not a sandbox."
         };
         left.Controls.Add(note);
+
+        left.Controls.Add(MakeLabel("RUN A LINUX GUI APPLICATION (WSL2)", 10F, true, 4, 888, 340, 24));
+
+        _linuxUrlInput.Multiline = true;
+        _linuxUrlInput.ScrollBars = ScrollBars.Vertical;
+        _linuxUrlInput.PlaceholderText = "Direct GitHub Release URL for an x86-64 .AppImage or ELF binary";
+        _linuxUrlInput.Height = 54;
+        AddField(left, "Linux AppImage / ELF URL", _linuxUrlInput, 922, 944);
+
+        _linuxShaInput.PlaceholderText = "64-character SHA-256";
+        _linuxShaInput.Height = 28;
+        AddField(left, "Expected SHA-256", _linuxShaInput, 1006, 1028);
+
+        _linuxArgumentsInput.Multiline = true;
+        _linuxArgumentsInput.ScrollBars = ScrollBars.Vertical;
+        _linuxArgumentsInput.PlaceholderText = "Optional Linux arguments";
+        _linuxArgumentsInput.Height = 54;
+        AddField(left, "Linux command-line arguments", _linuxArgumentsInput, 1066, 1088);
+
+        _wslStatusButton.Text = "Check WSL2 / WSLg readiness";
+        _wslStatusButton.SetBounds(8, 1154, 340, 40);
+        StyleSecondaryButton(_wslStatusButton);
+        _wslStatusButton.Click += async (_, _) => await CheckWslAsync();
+        left.Controls.Add(_wslStatusButton);
+
+        _linuxRunButton.Text = "Download, verify and run Linux app";
+        StylePrimaryButton(_linuxRunButton);
+        _linuxRunButton.SetBounds(8, 1200, 340, 42);
+        _linuxRunButton.Click += async (_, _) => await RunLinuxAsync();
+        left.Controls.Add(_linuxRunButton);
 
         var right = new SplitContainer
         {
@@ -311,6 +346,45 @@ internal sealed class MainForm : Form
                 "start",
                 _urlInput.Text.Trim(),
                 _shaInput.Text.Trim(),
+                arguments));
+
+            ApplyAgentResponse(response);
+        });
+    }
+
+    private async Task CheckWslAsync()
+    {
+        await RunCommandAsync(async () =>
+        {
+            var response = await _agent.SendAsync(new AgentCommand("wsl-status"));
+            Log(response.Message);
+            _status.Text = response.Success ? "● " + response.Message : "○ " + response.Message;
+            _status.ForeColor = response.Success ? Color.LightGreen : Color.Salmon;
+        });
+    }
+
+    private async Task RunLinuxAsync()
+    {
+        await StopLivePreviewAsync();
+
+        if (string.IsNullOrWhiteSpace(_linuxUrlInput.Text) ||
+            string.IsNullOrWhiteSpace(_linuxShaInput.Text))
+        {
+            MessageBox.Show(this,
+                "Enter a direct GitHub Release .AppImage or x86-64 ELF URL and its expected SHA-256 checksum.",
+                "Missing information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        await RunCommandAsync(async () =>
+        {
+            var arguments = WindowsCommandLineParser.ParseArguments(_linuxArgumentsInput.Text);
+            Log("Starting HostAgent: checking WSLg, downloading the Linux asset and verifying SHA-256...");
+
+            var response = await _agent.SendAsync(new AgentCommand(
+                "start-linux",
+                _linuxUrlInput.Text.Trim(),
+                _linuxShaInput.Text.Trim(),
                 arguments));
 
             ApplyAgentResponse(response);
@@ -998,6 +1072,8 @@ internal sealed class MainForm : Form
     private void SetActionsEnabled(bool enabled)
     {
         _runButton.Enabled = enabled;
+        _wslStatusButton.Enabled = enabled;
+        _linuxRunButton.Enabled = enabled;
         _captureButton.Enabled = enabled && _activeWindowHandle.HasValue && _previewCts is null;
         _startPreviewButton.Enabled = enabled && _activeWindowHandle.HasValue && _previewCts is null;
         _stopPreviewButton.Enabled = _previewCts is not null;
@@ -1021,8 +1097,8 @@ internal sealed class MainForm : Form
               code{color:#93c5fd}
             </style></head>
             <body><main><h2>CloudRunner application preview</h2>
-            <p>Start the dedicated capture test window, or provide a trusted GitHub Release EXE URL and SHA-256.</p>
-            <p>After the application opens, click <b>Capture application window</b> for one frame, or <b>Start live preview</b> for continuous local updates.</p>
+            <p>Start the capture test window, provide a trusted GitHub Release EXE URL, or use the Linux section to run an x86-64 ELF / AppImage through WSLg.</p>
+            <p>After a Windows or WSLg application window opens, click <b>Capture application window</b> for one frame, or <b>Start live preview</b> for continuous local updates.</p>
             <p>Live preview is currently capped at about 5 frames per second. The experimental remote-viewing panel can send this preview to one browser viewer over WebRTC.</p>
             </main></body></html>
             """);
