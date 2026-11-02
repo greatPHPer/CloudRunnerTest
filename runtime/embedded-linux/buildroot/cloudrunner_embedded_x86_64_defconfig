@@ -1,0 +1,32 @@
+BR2_x86_64=y
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_INSTALL_LIBSTDCPP=y
+BR2_TARGET_GENERIC_HOSTNAME="cloudrunner-linux"
+BR2_TARGET_GENERIC_ISSUE="CloudRunner Embedded Linux"
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
+BR2_ROOTFS_OVERLAY="board/cloudrunner/embedded-linux/overlay"
+
+# Use the Microsoft WSL2 Linux kernel source as the starting point, but
+# configure it for QEMU's emulated x86_64 hardware rather than WSL hypercalls.
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_GIT=y
+BR2_LINUX_KERNEL_CUSTOM_REPO_URL="https://github.com/microsoft/WSL2-Linux-Kernel.git"
+BR2_LINUX_KERNEL_CUSTOM_REPO_VERSION="linux-msft-wsl-6.18.58.1"
+BR2_LINUX_KERNEL_USE_DEFCONFIG=y
+BR2_LINUX_KERNEL_DEFCONFIG="x86_64"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="board/cloudrunner/embedded-linux/linux-qemu.fragment"
+BR2_LINUX_KERNEL_BZIMAGE=y
+
+# Minimal X11 desktop for the first GUI smoke test.
+BR2_PACKAGE_XORG7=y
+BR2_PACKAGE_XSERVER_XORG_SERVER=y
+BR2_PACKAGE_XSERVER_XORG_SERVER_MODULAR=y
+BR2_PACKAGE_XDRIVER_XF86_VIDEO_FBDEV=y
+BR2_PACKAGE_XAPP_XEYES=y
+BR2_PACKAGE_XTERM=y
+
+# QEMU boots the ext4 image as a virtio block device.
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+BR2_TARGET_ROOTFS_EXT2_SIZE="512M"
+BR2_TARGET_ROOTFS_TAR=y
