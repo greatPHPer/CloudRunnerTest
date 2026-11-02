@@ -88,7 +88,8 @@
   let controlChannel = null;
   let controlEnabled = false;
   let lastPointerMoveAt = 0;
-  let activePointerButton = 0;
+  let activePointerButton = null;
+  let lastPointerPoint = { x: 0.5, y: 0.5 };
   const pressedRemoteKeys = new Set();
   const keepAwakeButton = document.getElementById('keep-awake');
 
@@ -96,8 +97,8 @@
     status.textContent = message;
   }
 
-  function sendControl(payload) {
-    if (!controlEnabled || !controlChannel || controlChannel.readyState !== 'open') return false;
+  function sendDirectControl(payload) {
+    if (!controlChannel || controlChannel.readyState !== 'open') return false;
     try {
       controlChannel.send(JSON.stringify(payload));
       return true;
@@ -107,8 +108,29 @@
     }
   }
 
+  function sendControl(payload) {
+    return controlEnabled && sendDirectControl(payload);
+  }
+
+  function releasePressedInput() {
+    if (activePointerButton !== null) {
+      sendDirectControl({
+        kind: 'pointer', phase: 'up', button: activePointerButton, ...lastPointerPoint
+      });
+      activePointerButton = null;
+    }
+    for (const keyCode of pressedRemoteKeys) {
+      sendDirectControl({
+        kind: 'key', phase: 'up', keyCode, ctrlKey: false, shiftKey: false, altKey: false
+      });
+    }
+    pressedRemoteKeys.clear();
+  }
+
   function setControlEnabled(enabled) {
-    controlEnabled = !!enabled && !!controlChannel && controlChannel.readyState === 'open';
+    const nextEnabled = !!enabled && !!controlChannel && controlChannel.readyState === 'open';
+    if (controlEnabled && !nextEnabled) releasePressedInput();
+    controlEnabled = nextEnabled;
     toggleControlButton.textContent = controlEnabled
       ? 'Disable mouse + keyboard control'
       : 'Enable mouse + keyboard control';
@@ -187,6 +209,7 @@
     video.focus();
     try { video.setPointerCapture(event.pointerId); } catch { /* Optional browser support. */ }
     activePointerButton = event.button;
+    lastPointerPoint = point;
     sendControl({ kind: 'pointer', phase: 'down', button: activePointerButton, ...point });
   });
   video.addEventListener('pointermove', event => {
@@ -196,13 +219,15 @@
     const point = getVideoPoint(event);
     if (!point) return;
     lastPointerMoveAt = now;
+    lastPointerPoint = point;
     sendControl({ kind: 'pointer', phase: 'move', ...point });
   });
   function finishPointer(event) {
     if (!controlEnabled) return;
-    const point = getVideoPoint(event);
-    if (!point) return;
+    const point = getVideoPoint(event) || lastPointerPoint;
+    if (activePointerButton === null) return;
     sendControl({ kind: 'pointer', phase: 'up', button: activePointerButton, ...point });
+    activePointerButton = null;
   }
   video.addEventListener('pointerup', finishPointer);
   video.addEventListener('pointercancel', finishPointer);
@@ -233,14 +258,8 @@
   }
   video.addEventListener('keydown', event => forwardKey(event, 'down'));
   video.addEventListener('keyup', event => forwardKey(event, 'up'));
-  window.addEventListener('blur', () => {
-    if (controlEnabled) {
-      for (const keyCode of pressedRemoteKeys) {
-        sendControl({ kind: 'key', phase: 'up', keyCode, ctrlKey: false, shiftKey: false, altKey: false });
-      }
-      pressedRemoteKeys.clear();
-    }
-  });
+  window.addEventListener('blur', releasePressedInput);
+  video.addEventListener('blur', releasePressedInput);
 
   function countLocalCandidates(pc) {
     const sdp = pc.localDescription?.sdp || '';
