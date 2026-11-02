@@ -92,6 +92,12 @@ internal sealed class AgentServer : IAsyncDisposable
                         response = await _session.StartLinuxTestAppAsync(cancellationToken);
                         break;
 
+                    case "start-embedded-linux-test":
+                        response = await _session.StartEmbeddedLinuxTestAsync(
+                            request.Application ?? "xterm",
+                            cancellationToken);
+                        break;
+
                     case "start-test-window":
                         response = await _session.StartTestWindowAsync(cancellationToken);
                         break;
