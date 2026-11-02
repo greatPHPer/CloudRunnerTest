@@ -2,6 +2,18 @@ name: Build CloudRunner Embedded Linux Package
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/wsl-linux-runtime
+    paths:
+      - ".github/workflows/build-embedded-linux-runtime.yml"
+      - "runtime/embedded-linux/**"
+      - "CloudRunner.HostAgent/EmbeddedLinuxRuntime.cs"
+      - "CloudRunner.HostAgent/ExecutionSession.cs"
+      - "CloudRunner.HostAgent/AgentServer.cs"
+      - "CloudRunner.HostAgent/AgentProtocol.cs"
+      - "CloudRunner.WinForms/HostAgentClient.cs"
+      - "CloudRunner.WinForms/MainForm.cs"
 
 permissions:
   contents: read
