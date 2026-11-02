@@ -18,7 +18,7 @@ jobs:
       - name: Install Buildroot host dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc bison flex gettext git libncurses-dev python3 rsync unzip wget cpio file patch perl sed tar gzip xz-utils
+          sudo apt-get install -y build-essential bc bison flex gettext git libncurses-dev libssl-dev libelf-dev python3 rsync unzip wget cpio file patch perl sed tar gzip xz-utils
 
       - name: Fetch pinned Buildroot release
         run: |
@@ -108,6 +108,7 @@ jobs:
           cp /ucrt64/bin/qemu-img.exe "$QEMU_DIR/bin/"
           cp /ucrt64/bin/*.dll "$QEMU_DIR/bin/"
           cp -R /ucrt64/share/qemu/. "$QEMU_DIR/share/qemu/"
+          if [ -d /ucrt64/share/licenses ]; then cp -R /ucrt64/share/licenses "$QEMU_DIR/licenses/msys2-share"; fi
 
           pacman -Qi mingw-w64-ucrt-x86_64-qemu > "$QEMU_DIR/licenses/qemu-package-info.txt"
           pacman -Qi mingw-w64-ucrt-x86_64-qemu-image-util > "$QEMU_DIR/licenses/qemu-image-util-package-info.txt"
