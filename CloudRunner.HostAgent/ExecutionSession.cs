@@ -19,6 +19,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
     private HashSet<long>? _linuxPreviousWindows;
     private long? _linuxWindowHandle;
     private string? _linuxWindowTitle;
+    private string? _linuxJobDirectoryWslPath;
 
     public async Task<AgentResponse> StartAsync(
         string url,
@@ -26,7 +27,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
         string[] arguments,
         CancellationToken cancellationToken)
     {
-        CleanupExitedProcess();
+        await CleanupExitedProcessAsync();
 
         if (HasActiveProcess())
         {
@@ -119,7 +120,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
         string[] arguments,
         CancellationToken cancellationToken)
     {
-        CleanupExitedProcess();
+        await CleanupExitedProcessAsync();
 
         if (HasActiveProcess())
         {
@@ -146,16 +147,23 @@ internal sealed class ExecutionSession : IAsyncDisposable
             var linuxAssetPath = Path.Combine(
                 _jobDirectory,
                 appImage ? "application.AppImage" : "application.elf");
-            var pidFilePath = Path.Combine(_jobDirectory, "application.pid");
 
             var verifiedHash = await _linuxDownloader.DownloadAndVerifyAsync(
                 url, sha256, linuxAssetPath, cancellationToken);
 
-            var linuxExecutablePath = await WslRuntime.ConvertWindowsPathAsync(
-                linuxAssetPath, cancellationToken);
-            _linuxPidFileWslPath = await WslRuntime.ConvertWindowsPathAsync(
-                pidFilePath, cancellationToken);
+            // Stage in the WSL ext4 filesystem. DrvFS metadata is disabled by
+            // default on many installations, so chmod/execute under /mnt/c is unreliable.
+            var sessionId = Guid.NewGuid().ToString("N");
+            _linuxJobDirectoryWslPath = await WslRuntime.CreateLinuxSessionDirectoryAsync(
+                sessionId, cancellationToken);
 
+            var windowsMountedAssetPath = await WslRuntime.ConvertWindowsPathAsync(
+                linuxAssetPath, cancellationToken);
+            var linuxExecutablePath = $"{_linuxJobDirectoryWslPath}/{(appImage ? "application.AppImage" : "application.elf")}";
+            _linuxPidFileWslPath = $"{_linuxJobDirectoryWslPath}/application.pid";
+
+            await WslRuntime.CopyLinuxFileAsync(
+                windowsMountedAssetPath, linuxExecutablePath, cancellationToken);
             await WslRuntime.MakeExecutableAsync(linuxExecutablePath, cancellationToken);
 
             _linuxPreviousWindows = WslRuntime.SnapshotVisibleWindows();
@@ -242,6 +250,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
                 _linuxProcess = null;
             }
 
+            await CleanupLinuxSessionDirectoryAsync();
             ResetLinuxWindowState();
             DeleteJobDirectory();
             throw;
@@ -250,7 +259,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
 
     public async Task<AgentResponse> StartLinuxTestAppAsync(CancellationToken cancellationToken)
     {
-        CleanupExitedProcess();
+        await CleanupExitedProcessAsync();
 
         if (HasActiveProcess())
         {
@@ -272,9 +281,10 @@ internal sealed class ExecutionSession : IAsyncDisposable
 
         try
         {
-            var pidFilePath = Path.Combine(_jobDirectory, "linux-test.pid");
-            _linuxPidFileWslPath = await WslRuntime.ConvertWindowsPathAsync(
-                pidFilePath, cancellationToken);
+            var sessionId = Guid.NewGuid().ToString("N");
+            _linuxJobDirectoryWslPath = await WslRuntime.CreateLinuxSessionDirectoryAsync(
+                sessionId, cancellationToken);
+            _linuxPidFileWslPath = $"{_linuxJobDirectoryWslPath}/linux-test.pid";
             _linuxPreviousWindows = WslRuntime.SnapshotVisibleWindows();
             _linuxWindowHandle = null;
             _linuxWindowTitle = null;
@@ -357,6 +367,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
                 _linuxProcess = null;
             }
 
+            await CleanupLinuxSessionDirectoryAsync();
             ResetLinuxWindowState();
             DeleteJobDirectory();
             throw;
@@ -365,7 +376,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
 
     public async Task<AgentResponse> StartTestWindowAsync(CancellationToken cancellationToken)
     {
-        CleanupExitedProcess();
+        await CleanupExitedProcessAsync();
 
         if (HasActiveProcess())
         {
@@ -441,9 +452,9 @@ internal sealed class ExecutionSession : IAsyncDisposable
         }
     }
 
-    public AgentResponse GetStatus()
+    public async Task<AgentResponse> GetStatusAsync()
     {
-        CleanupExitedProcess();
+        await CleanupExitedProcessAsync();
 
         if (_process is not null)
         {
@@ -573,6 +584,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
 
             process.Dispose();
             _linuxProcess = null;
+            await CleanupLinuxSessionDirectoryAsync();
             ResetLinuxWindowState();
             DeleteJobDirectory();
         }
@@ -692,7 +704,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
         (_process is not null && !_process.HasExited) ||
         (_linuxProcess is not null && !_linuxProcess.HasExited);
 
-    private void CleanupExitedProcess()
+    private async Task CleanupExitedProcessAsync()
     {
         if (_linuxProcess is not null)
         {
@@ -711,6 +723,7 @@ internal sealed class ExecutionSession : IAsyncDisposable
             {
                 _linuxProcess.Dispose();
                 _linuxProcess = null;
+                await CleanupLinuxSessionDirectoryAsync();
                 ResetLinuxWindowState();
                 DeleteJobDirectory();
             }
@@ -742,6 +755,27 @@ internal sealed class ExecutionSession : IAsyncDisposable
         _job?.Dispose();
         _job = null;
         DeleteJobDirectory();
+    }
+
+    private async Task CleanupLinuxSessionDirectoryAsync()
+    {
+        var directory = _linuxJobDirectoryWslPath;
+        _linuxJobDirectoryWslPath = null;
+
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return;
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await WslRuntime.RemoveLinuxSessionDirectoryAsync(directory, timeout.Token);
+        }
+        catch
+        {
+            // Cleanup is best-effort if WSL has already been shut down.
+        }
     }
 
     private void ResetLinuxWindowState()
