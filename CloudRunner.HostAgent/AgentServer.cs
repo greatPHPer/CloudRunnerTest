@@ -74,6 +74,20 @@ internal sealed class AgentServer : IAsyncDisposable
                             cancellationToken);
                         break;
 
+                    case "start-linux":
+                        response = await _session.StartLinuxAsync(
+                            request.Url ?? string.Empty,
+                            request.Sha256 ?? string.Empty,
+                            request.Arguments ?? [],
+                            cancellationToken);
+                        break;
+
+                    case "wsl-status":
+                        response = new AgentResponse(
+                            true,
+                            await WslRuntime.GetEnvironmentSummaryAsync(cancellationToken));
+                        break;
+
                     case "start-test-window":
                         response = await _session.StartTestWindowAsync(cancellationToken);
                         break;
