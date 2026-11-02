@@ -28,7 +28,7 @@ internal static class WslRuntime
 
         var environment = await RunAsync(
             ["--exec", "/bin/sh", "-c",
-             "printf '%s\\n%s\\n%s\\n' \"$WSL_DISTRO_NAME\" \"$DISPLAY\" \"$WAYLAND_DISPLAY\""],
+             "printf '%s\\n%s\\n%s\\n%s\\n' \"$WSL_DISTRO_NAME\" \"$DISPLAY\" \"$WAYLAND_DISPLAY\" \"$(id -u)\""],
             cancellationToken);
 
         if (environment.ExitCode != 0)
@@ -43,6 +43,14 @@ internal static class WslRuntime
         var distro = lines.ElementAtOrDefault(0) ?? "default distribution";
         var display = lines.ElementAtOrDefault(1) ?? string.Empty;
         var wayland = lines.ElementAtOrDefault(2) ?? string.Empty;
+        var userId = lines.ElementAtOrDefault(3) ?? string.Empty;
+
+        if (userId == "0")
+        {
+            throw new InvalidOperationException(
+                $"The default WSL user for '{distro}' is root. CloudRunner will not launch downloaded applications as root. " +
+                "Set a regular default Linux user for this distribution, then retry.");
+        }
 
         if (string.IsNullOrWhiteSpace(display) && string.IsNullOrWhiteSpace(wayland))
         {
@@ -55,7 +63,7 @@ internal static class WslRuntime
             ? $"Wayland={wayland}, DISPLAY={display}"
             : $"DISPLAY={display}";
 
-        return $"WSL is ready. Distribution: {distro}. Linux GUI display: {displayDescription}.";
+        return $"WSL is ready. Distribution: {distro}. Linux user ID: {userId}. GUI display: {displayDescription}.";
     }
 
     public static async Task<string> ConvertWindowsPathAsync(
@@ -93,7 +101,8 @@ internal static class WslRuntime
     public static Process StartLinuxApplication(
         string linuxExecutablePath,
         string linuxPidFilePath,
-        IReadOnlyList<string> arguments)
+        IReadOnlyList<string> arguments,
+        bool isAppImage)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -108,10 +117,14 @@ internal static class WslRuntime
         startInfo.ArgumentList.Add("/bin/sh");
         startInfo.ArgumentList.Add("-c");
 
+        var script = isAppImage
+            ? "export APPIMAGE_EXTRACT_AND_RUN=1; printf '%s' \\"$$\\" > \\"$1\\"; shift; exec \\"$@\\"" 
+            : "printf '%s' \\"$$\\" > \\"$1\\"; shift; exec \\"$@\\"";
+
         // The shell writes its PID before replacing itself with the application.
         // setsid gives this application a dedicated process group, allowing Stop
         // to terminate the application and its same-session child processes.
-        startInfo.ArgumentList.Add("printf '%s' \"$$\" > \"$1\"; shift; exec \"$@\"");
+        startInfo.ArgumentList.Add(script);
         startInfo.ArgumentList.Add("cloudrunner");
         startInfo.ArgumentList.Add(linuxPidFilePath);
         startInfo.ArgumentList.Add(linuxExecutablePath);
@@ -132,10 +145,10 @@ internal static class WslRuntime
     {
         var signal = force ? "KILL" : "TERM";
         var script =
-            "pid=$(cat \"$1\" 2>/dev/null || true); " +
-            "case \"$pid\" in ''|*[!0-9]*) exit 0;; esac; " +
-            $"kill -{signal} -- \"-$pid\" 2>/dev/null || " +
-            $"kill -{signal} \"$pid\" 2>/dev/null || true";
+            "pid=$(cat \\"$1\\" 2>/dev/null || true); " +
+            "case \\"$pid\\" in ''|*[!0-9]*) exit 0;; esac; " +
+            $"/bin/kill -{signal} -- \\"-$pid\\" 2>/dev/null || " +
+            $"/bin/kill -{signal} \\"$pid\\" 2>/dev/null || true";
 
         _ = await RunAsync(
             ["--exec", "/bin/sh", "-c", script, "cloudrunner-stop", linuxPidFilePath],
