@@ -162,7 +162,7 @@ internal static class RemoteInputService
                     0 => MouseLeftUp,
                     1 => MouseMiddleUp,
                     2 => MouseRightUp,
-                    _ => 0
+                    _ => 0u
                 };
                 if (flags != 0)
                 {
@@ -207,7 +207,7 @@ internal static class RemoteInputService
                 (1, "up") => MouseMiddleUp,
                 (2, "down") => MouseRightDown,
                 (2, "up") => MouseRightUp,
-                _ => 0
+                _ => 0u
             };
         }
         else if (phase != "move")
