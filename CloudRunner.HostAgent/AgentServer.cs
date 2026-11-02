@@ -88,6 +88,10 @@ internal sealed class AgentServer : IAsyncDisposable
                             await WslRuntime.GetEnvironmentSummaryAsync(cancellationToken));
                         break;
 
+                    case "start-linux-test":
+                        response = await _session.StartLinuxTestAppAsync(cancellationToken);
+                        break;
+
                     case "start-test-window":
                         response = await _session.StartTestWindowAsync(cancellationToken);
                         break;
