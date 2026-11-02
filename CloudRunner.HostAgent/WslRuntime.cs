@@ -137,8 +137,8 @@ internal static class WslRuntime
         startInfo.ArgumentList.Add("-c");
 
         var script = isAppImage
-            ? "export APPIMAGE_EXTRACT_AND_RUN=1; printf '%s' \\"$$\\" > \\"$1\\"; shift; exec \\"$@\\"" 
-            : "printf '%s' \\"$$\\" > \\"$1\\"; shift; exec \\"$@\\"";
+            ? "export APPIMAGE_EXTRACT_AND_RUN=1; printf '%s' \"$$\" > \"$1\"; shift; exec \"$@\"" 
+            : "printf '%s' \"$$\" > \"$1\"; shift; exec \"$@\"";
 
         // The shell writes its PID before replacing itself with the application.
         // setsid gives this application a dedicated process group, allowing Stop
@@ -164,10 +164,10 @@ internal static class WslRuntime
     {
         var signal = force ? "KILL" : "TERM";
         var script =
-            "pid=$(cat \\"$1\\" 2>/dev/null || true); " +
-            "case \\"$pid\\" in ''|*[!0-9]*) exit 0;; esac; " +
-            $"/bin/kill -{signal} -- \\"-$pid\\" 2>/dev/null || " +
-            $"/bin/kill -{signal} \\"$pid\\" 2>/dev/null || true";
+            "pid=$(cat \"$1\" 2>/dev/null || true); " +
+            "case \"$pid\" in ''|*[!0-9]*) exit 0;; esac; " +
+            $"/bin/kill -{signal} -- \"-$pid\" 2>/dev/null || " +
+            $"/bin/kill -{signal} \"$pid\" 2>/dev/null || true";
 
         _ = await RunAsync(
             ["--exec", "/bin/sh", "-c", script, "cloudrunner-stop", linuxPidFilePath],
