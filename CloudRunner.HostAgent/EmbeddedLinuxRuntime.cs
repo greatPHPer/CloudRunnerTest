@@ -185,7 +185,7 @@ internal static class EmbeddedLinuxRuntime
     private static string FirstUsefulLine(string first, string second)
     {
         var value = !string.IsNullOrWhiteSpace(first) ? first : second;
-        return value.Split(['\\r', '\\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        return value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .FirstOrDefault() ?? "No additional details were returned.";
     }
 }
