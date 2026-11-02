@@ -339,14 +339,14 @@ internal static class RemoteInputService
         var inputs = new List<NativeInput>(text.Length * 2);
         foreach (var character in text)
         {
-            if (character == '\\n' || character == '\\r')
+            if (character == '\n' || character == '\r')
             {
                 inputs.Add(KeyEvent(0x0D, 0, 0));
                 inputs.Add(KeyEvent(0x0D, 0, KeyUp));
                 continue;
             }
 
-            if (character == '\\t')
+            if (character == '\t')
             {
                 inputs.Add(KeyEvent(0x09, 0, 0));
                 inputs.Add(KeyEvent(0x09, 0, KeyUp));
