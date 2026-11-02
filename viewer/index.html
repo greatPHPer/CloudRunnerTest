@@ -88,6 +88,7 @@
   let controlChannel = null;
   let controlEnabled = false;
   let lastPointerMoveAt = 0;
+  let activePointerButton = 0;
   const pressedRemoteKeys = new Set();
   const keepAwakeButton = document.getElementById('keep-awake');
 
@@ -185,12 +186,13 @@
     event.preventDefault();
     video.focus();
     try { video.setPointerCapture(event.pointerId); } catch { /* Optional browser support. */ }
-    sendControl({ kind: 'pointer', phase: 'down', button: event.button, ...point });
+    activePointerButton = event.button;
+    sendControl({ kind: 'pointer', phase: 'down', button: activePointerButton, ...point });
   });
   video.addEventListener('pointermove', event => {
     if (!controlEnabled) return;
     const now = Date.now();
-    if (now - lastPointerMoveAt < 35 && event.buttons === 0) return;
+    if (now - lastPointerMoveAt < 35) return;
     const point = getVideoPoint(event);
     if (!point) return;
     lastPointerMoveAt = now;
@@ -200,7 +202,7 @@
     if (!controlEnabled) return;
     const point = getVideoPoint(event);
     if (!point) return;
-    sendControl({ kind: 'pointer', phase: 'up', button: event.button, ...point });
+    sendControl({ kind: 'pointer', phase: 'up', button: activePointerButton, ...point });
   }
   video.addEventListener('pointerup', finishPointer);
   video.addEventListener('pointercancel', finishPointer);
