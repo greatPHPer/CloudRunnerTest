@@ -19,6 +19,12 @@ internal static class WslRuntime
                 "Windows Subsystem for Linux was not found. Install WSL from an elevated PowerShell using: wsl --install");
         }
 
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19044))
+        {
+            throw new PlatformNotSupportedException(
+                "Linux GUI applications through WSLg require Windows 10 build 19044 or later, or Windows 11.");
+        }
+
         var status = await RunAsync(["--status"], cancellationToken);
         if (status.ExitCode != 0)
         {
