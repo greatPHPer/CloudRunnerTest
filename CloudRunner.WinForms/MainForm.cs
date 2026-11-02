@@ -17,6 +17,7 @@ internal sealed class MainForm : Form
     private readonly TextBox _linuxShaInput = new();
     private readonly TextBox _linuxArgumentsInput = new();
     private readonly Button _wslStatusButton = new();
+    private readonly Button _linuxTestButton = new();
     private readonly Button _linuxRunButton = new();
     private readonly Label _status = new();
     private readonly Label _windowInfo = new();
@@ -216,9 +217,15 @@ internal sealed class MainForm : Form
         _wslStatusButton.Click += async (_, _) => await CheckWslAsync();
         left.Controls.Add(_wslStatusButton);
 
+        _linuxTestButton.Text = "Launch WSLg test app (xeyes)";
+        _linuxTestButton.SetBounds(8, 1200, 340, 40);
+        StyleSecondaryButton(_linuxTestButton);
+        _linuxTestButton.Click += async (_, _) => await StartLinuxTestAsync();
+        left.Controls.Add(_linuxTestButton);
+
         _linuxRunButton.Text = "Download, verify and run Linux app";
         StylePrimaryButton(_linuxRunButton);
-        _linuxRunButton.SetBounds(8, 1200, 340, 42);
+        _linuxRunButton.SetBounds(8, 1246, 340, 42);
         _linuxRunButton.Click += async (_, _) => await RunLinuxAsync();
         left.Controls.Add(_linuxRunButton);
 
@@ -360,6 +367,18 @@ internal sealed class MainForm : Form
             Log(response.Message);
             _status.Text = response.Success ? "● " + response.Message : "○ " + response.Message;
             _status.ForeColor = response.Success ? Color.LightGreen : Color.Salmon;
+        });
+    }
+
+    private async Task StartLinuxTestAsync()
+    {
+        await StopLivePreviewAsync();
+
+        await RunCommandAsync(async () =>
+        {
+            Log("Starting the WSLg xeyes test application...");
+            var response = await _agent.SendAsync(new AgentCommand("start-linux-test"));
+            ApplyAgentResponse(response);
         });
     }
 
@@ -1073,6 +1092,7 @@ internal sealed class MainForm : Form
     {
         _runButton.Enabled = enabled;
         _wslStatusButton.Enabled = enabled;
+        _linuxTestButton.Enabled = enabled;
         _linuxRunButton.Enabled = enabled;
         _captureButton.Enabled = enabled && _activeWindowHandle.HasValue && _previewCts is null;
         _startPreviewButton.Enabled = enabled && _activeWindowHandle.HasValue && _previewCts is null;
