@@ -172,7 +172,7 @@ internal static class EmbeddedLinuxRuntime
         Add("-net", "none");
         Add("-rtc", "base=localtime");
         Add("-boot", "order=c");
-        Add("-no-reboot");
+        startInfo.ArgumentList.Add("-no-reboot");
         Add("-L", runtime.QemuShareDirectory);
 
         return startInfo;
