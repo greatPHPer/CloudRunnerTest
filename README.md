@@ -131,7 +131,7 @@ Microsoft's WSLg documentation: https://learn.microsoft.com/en-us/windows/wsl/tu
 3. Click **Check WSL2 / WSLg readiness**. The status must report a distribution, a non-root Linux UID, and a GUI display.
 4. Paste a direct GitHub Release asset URL for an x86-64 Linux ELF executable or x86-64 AppImage.
 5. Enter the publisher-provided SHA-256 and optional Linux arguments.
-6. Click **Download, verify and run Linux app**. CloudRunner downloads to its local per-session folder, verifies the ELF architecture and SHA-256, marks the file executable in WSL, and launches it in a separate Linux process group.
+6. Click **Download, verify and run Linux app**. CloudRunner downloads to its local per-session folder, verifies the ELF architecture and SHA-256, copies the file into the WSL user's Linux filesystem (ext4), marks it executable there, and launches it in a separate Linux process group. The temporary Linux-side folder is removed when the session is stopped or its launcher exits.
 7. CloudRunner looks for the new desktop window and uses the existing one-frame / continuous preview buttons to display it in WebView2.
 8. Click **Stop application** to stop the Linux process group and remove the temporary download folder.
 
