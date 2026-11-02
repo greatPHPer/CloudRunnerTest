@@ -1,0 +1,179 @@
+name: Build CloudRunner Embedded Linux Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-guest:
+    name: Build WSL-source kernel + Buildroot X11 guest
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout CloudRunner
+        uses: actions/checkout@v4
+
+      - name: Install Buildroot host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex gettext git libncurses-dev python3 rsync unzip wget cpio file patch perl sed tar gzip xz-utils
+
+      - name: Fetch pinned Buildroot release
+        run: |
+          git clone --depth 1 --branch 2026.08.1 https://github.com/buildroot/buildroot.git buildroot
+          git -C buildroot rev-parse HEAD
+
+      - name: Install CloudRunner board configuration
+        run: |
+          cp runtime/embedded-linux/buildroot/cloudrunner_embedded_x86_64_defconfig buildroot/configs/cloudrunner_embedded_x86_64_defconfig
+          mkdir -p buildroot/board/cloudrunner/embedded-linux
+          cp -R runtime/embedded-linux/buildroot/board/cloudrunner/embedded-linux/. buildroot/board/cloudrunner/embedded-linux/
+          chmod +x buildroot/board/cloudrunner/embedded-linux/overlay/etc/init.d/S99cloudrunner-gui
+          make -C buildroot cloudrunner_embedded_x86_64_defconfig
+
+      - name: Build Linux kernel and X11 root filesystem
+        run: |
+          make -C buildroot -j"$(nproc)"
+
+      - name: Collect Buildroot legal information
+        run: |
+          make -C buildroot legal-info
+
+      - name: Stage guest runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s buildroot/output/images/bzImage
+          test -s buildroot/output/images/rootfs.ext4
+          mkdir -p artifacts/Linux/LICENSES
+          cp buildroot/output/images/bzImage artifacts/Linux/bzImage
+          cp buildroot/output/images/rootfs.ext4 artifacts/Linux/rootfs.ext4
+          cp buildroot/.config artifacts/Linux/buildroot.config
+          cp runtime/embedded-linux/buildroot/board/cloudrunner/embedded-linux/linux-qemu.fragment artifacts/Linux/linux-qemu.fragment
+          cp -R buildroot/output/legal-info artifacts/Linux/LICENSES/buildroot-legal-info
+          {
+            echo "CloudRunner Embedded Linux guest build"
+            echo "Buildroot tag: 2026.08.1"
+            echo "Buildroot commit: $(git -C buildroot rev-parse HEAD)"
+            echo "Linux source: https://github.com/microsoft/WSL2-Linux-Kernel"
+            echo "Linux tag: linux-msft-wsl-6.18.58.1"
+            echo "Linux commit: a989171929bed4ea681be8d77333845ce1c1732a"
+            echo "Architecture: x86_64"
+            echo "Root filesystem: ext4, 512 MiB virtual size"
+            echo "GUI applications: xeyes, xterm"
+            echo "Guest display: Xorg modesetting on QEMU virtio-vga"
+            echo "Built at UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > artifacts/Linux/BUILD-MANIFEST.txt
+
+      - name: Upload Linux guest
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudrunner-linux-guest
+          path: artifacts/Linux
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows-qemu:
+    name: Package Windows QEMU + SDL runtime
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout CloudRunner
+        uses: actions/checkout@v4
+
+      - name: Install QEMU from MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-qemu
+            mingw-w64-ucrt-x86_64-qemu-image-util
+
+      - name: Stage QEMU executable, libraries and firmware
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          QEMU_DIR="$PWD/artifacts/Qemu"
+          mkdir -p "$QEMU_DIR/bin" "$QEMU_DIR/share/qemu" "$QEMU_DIR/licenses"
+
+          test -f /ucrt64/bin/qemu-system-x86_64.exe
+          test -f /ucrt64/bin/qemu-img.exe
+          /ucrt64/bin/qemu-system-x86_64.exe -display help | tee "$QEMU_DIR/display-backends.txt"
+          grep -qi "sdl" "$QEMU_DIR/display-backends.txt"
+
+          cp /ucrt64/bin/qemu-system-x86_64.exe "$QEMU_DIR/bin/"
+          cp /ucrt64/bin/qemu-img.exe "$QEMU_DIR/bin/"
+          cp /ucrt64/bin/*.dll "$QEMU_DIR/bin/"
+          cp -R /ucrt64/share/qemu/. "$QEMU_DIR/share/qemu/"
+
+          pacman -Qi mingw-w64-ucrt-x86_64-qemu > "$QEMU_DIR/licenses/qemu-package-info.txt"
+          pacman -Qi mingw-w64-ucrt-x86_64-qemu-image-util > "$QEMU_DIR/licenses/qemu-image-util-package-info.txt"
+          pacman -Q > "$QEMU_DIR/licenses/msys2-installed-packages.txt"
+          curl -fL https://raw.githubusercontent.com/msys2/MINGW-packages/master/mingw-w64-qemu/PKGBUILD -o "$QEMU_DIR/licenses/MSYS2-QEMU-PKGBUILD"
+          qemu_version="$(pacman -Q mingw-w64-ucrt-x86_64-qemu | awk '{print $2}' | cut -d- -f1)"
+          curl -fL "https://download.qemu.org/qemu-${qemu_version}.tar.xz" -o "$QEMU_DIR/licenses/qemu-${qemu_version}-source.tar.xz"
+          /ucrt64/bin/qemu-system-x86_64.exe -version > "$QEMU_DIR/QEMU-VERSION.txt"
+
+      - name: Upload Windows QEMU runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudrunner-windows-qemu
+          path: artifacts/Qemu
+          if-no-files-found: error
+          retention-days: 7
+
+  package-cloudrunner:
+    name: Publish combined WinForms + Embedded Linux package
+    runs-on: windows-latest
+    needs:
+      - build-linux-guest
+      - build-windows-qemu
+    timeout-minutes: 20
+    steps:
+      - name: Checkout CloudRunner
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download Linux guest runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: cloudrunner-linux-guest
+          path: artifacts/CloudRunner.WinForms/Runtime/EmbeddedLinux/Linux
+
+      - name: Download Windows QEMU runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: cloudrunner-windows-qemu
+          path: artifacts/CloudRunner.WinForms/Runtime/EmbeddedLinux/Qemu
+
+      - name: Restore and publish WinForms
+        shell: pwsh
+        run: |
+          dotnet restore ./CloudRunner.WinForms/CloudRunner.WinForms.csproj
+          dotnet publish ./CloudRunner.WinForms/CloudRunner.WinForms.csproj --configuration Release --no-restore --output ./artifacts/CloudRunner.WinForms/Publish
+
+      - name: Assemble portable CloudRunner folder
+        shell: pwsh
+        run: |
+          $publish = Resolve-Path ./artifacts/CloudRunner.WinForms/Publish
+          $portable = "./artifacts/CloudRunner-EmbeddedLinux"
+          New-Item -ItemType Directory -Force $portable | Out-Null
+          Copy-Item "$($publish.Path)/*" $portable -Recurse -Force
+          New-Item -ItemType Directory -Force "$portable/Runtime/EmbeddedLinux" | Out-Null
+          Copy-Item "./artifacts/CloudRunner.WinForms/Runtime/EmbeddedLinux/*" "$portable/Runtime/EmbeddedLinux" -Recurse -Force
+          Copy-Item "./runtime/embedded-linux/README.md" "$portable/Runtime/EmbeddedLinux/README.md"
+
+      - name: Upload portable CloudRunner package
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudRunner-EmbeddedLinux-${{ github.run_number }}
+          path: artifacts/CloudRunner-EmbeddedLinux
+          if-no-files-found: error
+          retention-days: 7
