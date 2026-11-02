@@ -14,7 +14,8 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - **Continuous preview:** sequential local frame capture, rendered in WebView2 without navigating/reloading the page for each frame; currently capped at about 5 frames per second.
 - **Experimental Linux compatibility:** downloads and verifies x86-64 ELF/AppImage assets, then launches them inside the user's default WSL 2 distribution using WSLg. Newly created visible desktop windows are passed to the existing capture pipeline.
 - **Cloud compute:** none. Windows and Linux applications run locally on the user's PC; WSL is not a remote cloud worker.
-- **Remote video streaming:** experimental one-viewer WebRTC prototype; video only, sourced from the local preview canvas at about 5 FPS, with manual offer/answer exchange.
+- **Remote video streaming:** experimental one-viewer WebRTC prototype; video is sourced from the local preview canvas at about 5 FPS, with manual offer/answer exchange.
+- **Remote input:** optional WebRTC data channel for mouse, keyboard shortcuts and typed text. Input is disabled by default and requires both host approval and a viewer-side control toggle. System-key shortcuts (Alt/Windows keys and selected combinations) are blocked.
 - **Remote pairing/signalling:** no signalling service yet; SDP is exchanged manually. STUN only; no TURN relay.
 
 ## Project layout
@@ -33,7 +34,8 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
     │   ├── MainForm.cs
     │   ├── HostAgentClient.cs
     │   ├── WindowsCommandLineParser.cs
-    │   └── WindowCaptureService.cs
+    │   ├── WindowCaptureService.cs
+    │   └── RemoteInputService.cs
     └── CloudRunner.HostAgent
         ├── CloudRunner.HostAgent.csproj
         ├── Program.cs
@@ -120,9 +122,10 @@ Microsoft's WSLg documentation: https://learn.microsoft.com/en-us/windows/wsl/tu
 
 2. Start CloudRunner as a standard, non-elevated Windows user.
 3. Scroll to **RUN A LINUX GUI APPLICATION (WSL2)** and click **Check WSL2 / WSLg readiness**.
-4. Click **Launch WSLg test app (xeyes)**. A small Linux GUI window should appear on the Windows desktop.
-5. Click **Capture application window** for one frame, or **Start live preview** to send frames into WebView2.
-6. Click **Stop application** to terminate the Linux process group.
+4. Click **Launch WSLg interactive test (xterm)**. If xterm is missing, CloudRunner tells you to install it with `sudo apt update && sudo apt install -y xterm` inside Ubuntu.
+5. Click **Start live preview**. The xterm terminal should appear inside WebView2.
+6. Use the remote viewer's **Send text** box (or enable mouse + keyboard control and click the preview) to verify input. The host must check **Allow this connected viewer to control the application** first.
+7. Click **Stop application** to terminate the Linux process group.
 
 ### Run a Linux asset
 
