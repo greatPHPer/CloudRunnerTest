@@ -108,6 +108,9 @@ internal static class RemoteInputService
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint inputCount, NativeInput[] inputs, int inputSize);
 
@@ -222,7 +225,11 @@ internal static class RemoteInputService
 
         if (phase == "down")
         {
-            ActivateTarget(target);
+            if (!ActivateTarget(target))
+            {
+                return Fail("Windows did not allow the target application to become foreground; input was not sent to another window.", out message);
+            }
+
             HeldButtons.Add(button);
         }
         else if (phase == "up")
@@ -266,6 +273,11 @@ internal static class RemoteInputService
             return false;
         }
 
+        if (!ActivateTarget(target))
+        {
+            return Fail("Windows did not allow the target application to become foreground; wheel input was not sent to another window.", out message);
+        }
+
         var inputs = new[]
         {
             MouseEvent(absoluteX, absoluteY, 0, MouseMove | MouseAbsolute | MouseVirtualDesk),
@@ -306,9 +318,13 @@ internal static class RemoteInputService
             return Fail("That system shortcut is blocked by CloudRunner.", out message);
         }
 
+        if (!ActivateTarget(target))
+        {
+            return Fail("Windows did not allow the target application to become foreground; keyboard input was not sent to another window.", out message);
+        }
+
         if (phase == "down")
         {
-            ActivateTarget(target);
             HeldKeys.Add(keyCode);
         }
         else
@@ -335,7 +351,11 @@ internal static class RemoteInputService
             return Fail("Text input must contain between 1 and 256 characters.", out message);
         }
 
-        ActivateTarget(target);
+        if (!ActivateTarget(target))
+        {
+            return Fail("Windows did not allow the target application to become foreground; text was not sent to another window.", out message);
+        }
+
         var inputs = new List<NativeInput>(text.Length * 2);
         foreach (var character in text)
         {
@@ -401,7 +421,7 @@ internal static class RemoteInputService
         return true;
     }
 
-    private static void ActivateTarget(IntPtr target)
+    private static bool ActivateTarget(IntPtr target)
     {
         if (IsIconic(target))
         {
@@ -409,6 +429,7 @@ internal static class RemoteInputService
         }
 
         SetForegroundWindow(target);
+        return GetForegroundWindow() == target;
     }
 
     private static NativeInput MouseEvent(int x, int y, uint data, uint flags) => new()
