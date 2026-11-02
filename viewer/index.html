@@ -14,6 +14,7 @@
     h2{font-size:17px;margin:0 0 10px}
     p{color:#afc0d6;line-height:1.5;margin:7px 0 14px}
     video{width:100%;aspect-ratio:16/9;background:#050a12;border-radius:9px;object-fit:contain;touch-action:none;user-select:none;cursor:crosshair}
+    video.remote-control-active{cursor:none}
     .control-tools{margin:10px 0 14px;padding:12px;border:1px solid #34465f;border-radius:9px;background:#0b1728}
     .control-tools .text-row{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:7px}
     .control-tools input{min-width:0;width:100%;border:1px solid #3b4d67;border-radius:7px;background:#07111f;color:#dbeafe;padding:10px}
@@ -131,6 +132,9 @@
     const nextEnabled = !!enabled && !!controlChannel && controlChannel.readyState === 'open';
     if (controlEnabled && !nextEnabled) releasePressedInput();
     controlEnabled = nextEnabled;
+    // Hide the local browser cursor over the streamed application while
+    // controlling it; the host application's cursor is already in the video.
+    video.classList.toggle('remote-control-active', controlEnabled);
     toggleControlButton.textContent = controlEnabled
       ? 'Disable mouse + keyboard control'
       : 'Enable mouse + keyboard control';
