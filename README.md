@@ -12,7 +12,8 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - **Process lifecycle:** one application at a time, individual command-line arguments, Windows Job Object ownership with kill-on-close, stop the managed process tree and remove its temporary job directory.
 - **Window preview:** WgcSharp using Windows Graphics Capture first, with DXGI Desktop Duplication fallback, targeting the launched process's top-level HWND.
 - **Continuous preview:** sequential local frame capture, rendered in WebView2 without navigating/reloading the page for each frame; currently capped at about 5 frames per second.
-- **Experimental Linux compatibility:** downloads and verifies x86-64 ELF/AppImage assets, then launches them inside the user's default WSL 2 distribution using WSLg. Newly created visible desktop windows are passed to the existing capture pipeline.
+- **Experimental WSL-independent Linux guest:** a bundled QEMU x86-64 virtual machine boots a Buildroot root filesystem and a kernel built from Microsoft's WSL2 Linux kernel source. The first guest image includes Xorg, xeyes and xterm. This mode does not require an installed WSL distribution or Ubuntu.
+- **Optional WSL compatibility:** downloads and verifies x86-64 ELF/AppImage assets, then launches them inside the user's default WSL 2 distribution using WSLg. Newly created visible desktop windows are passed to the existing capture pipeline.
 - **Cloud compute:** none. Windows and Linux applications run locally on the user's PC; WSL is not a remote cloud worker.
 - **Remote video streaming:** experimental one-viewer WebRTC prototype; video is sourced from the local preview canvas at about 5 FPS, with manual offer/answer exchange.
 - **Remote input:** optional WebRTC data channel for mouse, keyboard shortcuts and typed text. Input is disabled by default and requires both host approval and a viewer-side control toggle. System-key shortcuts (Alt/Windows keys and selected combinations) are blocked.
@@ -23,6 +24,7 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
     CloudRunnerTest
     ├── .github/workflows
     │   ├── build-cloudrunner-winforms.yml
+    │   ├── build-embedded-linux-runtime.yml  # manual QEMU + Linux guest + WinForms package
     │   ├── deploy-cloudrunner-viewer.yml  # manual GitHub Pages deployment
     │   ├── diagnose-gui-session.yml       # old GitHub runner diagnostic experiment
     │   └── run-release-exe.yml            # headless Actions smoke test; not GUI hosting
@@ -44,7 +46,11 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
         ├── ReleaseAssetDownloader.cs
         ├── LinuxReleaseAssetDownloader.cs
         ├── WslRuntime.cs
+        ├── EmbeddedLinuxRuntime.cs
         └── ExecutionSession.cs
+    ├── runtime/embedded-linux
+    │   ├── README.md
+    │   └── buildroot/                 # pinned guest config, kernel fragment and X11 overlay
 
 ## Requirements
 
@@ -52,7 +58,8 @@ CloudRunner is a zero-hosting-cost Windows application runner. Each user runs ap
 - .NET 10 SDK to build.
 - Microsoft Edge WebView2 Evergreen Runtime.
 - A Windows 10/11 x64 machine with a compatible Direct3D 11 graphics device for window capture.
-- **Linux GUI support:** Windows 10 build 19044 or later (or Windows 11), WSL 2, WSLg, and a regular non-root default user in the Linux distribution.
+- **Bundled Embedded Linux GUI:** Windows x64, QEMU package included in the combined artifact, and a compatible Windows graphics device. WHPX acceleration is preferred when available; QEMU TCG software emulation is the fallback and can be slower. No WSL/Ubuntu installation is required.
+- **Optional WSL Linux GUI:** Windows 10 build 19044 or later (or Windows 11), WSL 2, WSLg, and a regular non-root default user in the Linux distribution.
 - CloudRunner should be started as a standard, non-elevated Windows user for downloaded application execution.
 
 ## Build
@@ -90,6 +97,69 @@ For a release EXE:
 3. Optionally supply command-line arguments.
 4. Click **Download, verify and run EXE**.
 5. Capture its window after the HostAgent reports a non-zero HWND.
+
+## Experimental WSL-independent Linux GUI execution (QEMU)
+
+The **Embedded Linux** buttons use a bundled x86-64 Linux virtual machine. The
+guest kernel is built from Microsoft's open-source WSL2 Linux kernel source,
+but it is configured for QEMU's emulated PCI/virtio devices rather than WSL.
+Buildroot creates a minimal ext4 filesystem containing Xorg, xeyes and xterm.
+
+This mode is designed to work on a Windows PC with **no WSL installation and
+no Ubuntu distribution**. QEMU boots the kernel and guest filesystem from
+CloudRunner's `Runtime\\EmbeddedLinux` folder. A per-session qcow2 overlay is
+created under the user's LocalAppData CloudRunner Jobs directory, so the
+bundled base image is not modified.
+
+### Build the portable package
+
+Run the manual workflow:
+
+https://github.com/greatPHPer/CloudRunnerTest/actions/workflows/build-embedded-linux-runtime.yml
+
+The workflow has three stages: Buildroot compiles the Linux guest on Ubuntu,
+MSYS2 supplies the Windows QEMU/SDL binaries, and a Windows runner publishes
+the combined WinForms + runtime package as
+`CloudRunner-EmbeddedLinux-<run number>`.
+
+Extract the complete artifact while preserving its folder structure. The
+expected layout is:
+
+```
+CloudRunner/
+  CloudRunner.WinForms.exe
+  Agent/
+  Runtime/
+    EmbeddedLinux/
+      Qemu/bin/
+      Qemu/share/qemu/
+      Linux/bzImage
+      Linux/rootfs.ext4
+      Linux/LICENSES/
+```
+
+### Test xeyes and xterm
+
+1. Start CloudRunner as a standard, non-elevated Windows user.
+2. Under **RUN BUNDLED LINUX APPLICATION (NO WSL)**, click **Launch xeyes**
+   or **Launch xterm**.
+3. Wait for the QEMU window and guest desktop to appear. The guest application
+   can take several seconds to start after the QEMU window opens.
+4. Click **Capture application window** or **Start live preview** to show the
+   QEMU display in WebView2.
+5. Stop the live preview, then click **Stop application** to terminate QEMU and
+   remove the per-session writable overlay.
+
+The first milestone deliberately launches only the bundled xeyes and xterm
+test applications. It does not yet install arbitrary Linux packages or launch
+user-supplied ELF/AppImage files. Those require a guest-side application
+staging protocol, dependency handling, and a non-root guest account.
+
+WHPX is used when Windows Hypervisor Platform acceleration is available.
+QEMU can fall back to TCG software emulation, which may be significantly
+slower. The virtual machine runs locally; it is not a remote cloud worker.
+This VM is a stronger isolation boundary than launching Linux programs in
+the host WSL distribution, but it is not yet a hardened malware sandbox.
 
 ## Experimental Linux GUI execution through WSLg
 
@@ -144,7 +214,7 @@ This is a local compatibility prototype, not remote execution. WSLg displays Lin
 
 ## Execution security
 
-CloudRunner is a launcher, not a malware sandbox. This also applies to Linux applications launched in WSL: they run with the permissions of the default WSL Linux user and may access files exposed through WSL mounts. A matching checksum verifies bytes, not software safety.
+CloudRunner is a launcher, not yet a hardened malware sandbox. Windows release EXEs run with the current Windows user's permissions. The optional WSL backend runs Linux programs with the default WSL user's permissions. The bundled QEMU backend runs a guest OS in a VM, but it has not yet undergone a dedicated adversarial isolation review. A matching checksum verifies bytes, not software safety.
 
 - Only direct HTTPS GitHub Release asset URLs are accepted.
 - Redirects are limited to HTTPS GitHub release asset hosts.
