@@ -104,6 +104,90 @@ internal static class WslRuntime
         }
     }
 
+    public static async Task<string> CreateLinuxSessionDirectoryAsync(
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParseExact(sessionId, "N", out _))
+        {
+            throw new ArgumentException("Linux session ID must be a 32-character GUID.", nameof(sessionId));
+        }
+
+        var homeResult = await RunAsync(["--exec", "/usr/bin/printenv", "HOME"], cancellationToken);
+        if (homeResult.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                "Could not determine the default WSL user's home directory. " +
+                FirstUsefulLine(homeResult.StandardError, homeResult.StandardOutput));
+        }
+
+        var home = homeResult.StandardOutput.Trim().TrimEnd('/');
+        if (!home.StartsWith("/home/", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "CloudRunner requires a regular WSL user with a home directory under /home. Root or system users are not supported.");
+        }
+
+        var sessionDirectory = $"{home}/.cache/cloudrunner/jobs/{sessionId}";
+        var create = await RunAsync(
+            ["--exec", "/bin/mkdir", "-p", "--", sessionDirectory],
+            cancellationToken);
+
+        if (create.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                "Could not create the Linux session folder inside the WSL filesystem. " +
+                FirstUsefulLine(create.StandardError, create.StandardOutput));
+        }
+
+        return sessionDirectory;
+    }
+
+    public static async Task CopyLinuxFileAsync(
+        string sourceLinuxPath,
+        string destinationLinuxPath,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunAsync(
+            ["--exec", "/bin/cp", "--", sourceLinuxPath, destinationLinuxPath],
+            cancellationToken);
+
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                "Could not copy the downloaded application into the WSL Linux filesystem. " +
+                FirstUsefulLine(result.StandardError, result.StandardOutput));
+        }
+    }
+
+    public static async Task RemoveLinuxSessionDirectoryAsync(
+        string sessionDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sessionDirectory) ||
+            !Guid.TryParseExact(Path.GetFileName(sessionDirectory), "N", out _))
+        {
+            return;
+        }
+
+        var homeResult = await RunAsync(["--exec", "/usr/bin/printenv", "HOME"], cancellationToken);
+        if (homeResult.ExitCode != 0)
+        {
+            return;
+        }
+
+        var home = homeResult.StandardOutput.Trim().TrimEnd('/');
+        var expectedPrefix = $"{home}/.cache/cloudrunner/jobs/";
+        if (!sessionDirectory.StartsWith(expectedPrefix, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Refusing to remove a Linux folder outside CloudRunner's WSL job directory.");
+        }
+
+        _ = await RunAsync(
+            ["--exec", "/bin/rm", "-rf", "--", sessionDirectory],
+            cancellationToken);
+    }
+
     public static async Task EnsureExecutableExistsAsync(
         string linuxPath,
         string installHint,
