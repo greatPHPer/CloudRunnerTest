@@ -97,7 +97,7 @@ internal sealed class AgentServer : IAsyncDisposable
                         break;
 
                     case "status":
-                        response = _session.GetStatus();
+                        response = await _session.GetStatusAsync();
                         break;
 
                     case "stop":
