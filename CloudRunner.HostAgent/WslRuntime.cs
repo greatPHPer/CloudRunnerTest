@@ -104,6 +104,19 @@ internal static class WslRuntime
         }
     }
 
+    public static async Task EnsureExecutableExistsAsync(
+        string linuxPath,
+        string installHint,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunAsync(["--exec", "/usr/bin/test", "-x", linuxPath], cancellationToken);
+        if (result.ExitCode != 0)
+        {
+            throw new FileNotFoundException(
+                $"The WSL GUI test program was not found at {linuxPath}. Install it inside Ubuntu with: {installHint}");
+        }
+    }
+
     public static Process StartLinuxApplication(
         string linuxExecutablePath,
         string linuxPidFilePath,
