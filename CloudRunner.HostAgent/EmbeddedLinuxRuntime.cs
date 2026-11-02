@@ -144,8 +144,10 @@ internal static class EmbeddedLinuxRuntime
             FileName = runtime.QemuSystemExecutable,
             WorkingDirectory = runtime.QemuBinaryDirectory,
             UseShellExecute = false,
-            CreateNoWindow = false,
-            WindowStyle = ProcessWindowStyle.Normal
+            // QEMU's SDL display is its GUI window; suppress its auxiliary
+            // console window so window discovery/capture targets the SDL view.
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
         };
 
         // MSYS2 QEMU DLLs are bundled alongside qemu-system-x86_64.exe.
