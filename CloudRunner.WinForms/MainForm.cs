@@ -219,7 +219,7 @@ internal sealed class MainForm : Form
         _wslStatusButton.Click += async (_, _) => await CheckWslAsync();
         left.Controls.Add(_wslStatusButton);
 
-        _linuxTestButton.Text = "Launch WSLg test app (xeyes)";
+        _linuxTestButton.Text = "Launch WSLg interactive test (xterm)";
         _linuxTestButton.SetBounds(8, 1200, 340, 40);
         StyleSecondaryButton(_linuxTestButton);
         _linuxTestButton.Click += async (_, _) => await StartLinuxTestAsync();
@@ -452,7 +452,7 @@ internal sealed class MainForm : Form
 
         await RunCommandAsync(async () =>
         {
-            Log("Starting the WSLg xeyes test application...");
+            Log("Starting the WSLg xterm interactive test application...");
             var response = await _agent.SendAsync(new AgentCommand("start-linux-test"));
             ApplyAgentResponse(response);
         });
@@ -517,6 +517,8 @@ internal sealed class MainForm : Form
             ApplyAgentResponse(response);
             if (response.Success)
             {
+                _remoteInputAllowed = false;
+                RemoteInputService.ReleaseAll();
                 _activeWindowHandle = null;
                 _captureButton.Enabled = false;
                 _startPreviewButton.Enabled = false;
