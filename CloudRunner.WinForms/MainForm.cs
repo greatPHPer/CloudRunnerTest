@@ -18,6 +18,8 @@ internal sealed class MainForm : Form
     private readonly TextBox _linuxArgumentsInput = new();
     private readonly Button _wslStatusButton = new();
     private readonly Button _linuxTestButton = new();
+    private readonly Button _embeddedLinuxXeyesButton = new();
+    private readonly Button _embeddedLinuxXtermButton = new();
     private readonly Button _linuxRunButton = new();
     private readonly Label _status = new();
     private readonly Label _windowInfo = new();
@@ -89,7 +91,7 @@ internal sealed class MainForm : Form
         });
         header.Controls.Add(new Label
         {
-            Text = "Run Windows EXEs or Linux GUI applications through WSLg · Preview in WebView2",
+            Text = "Run Windows EXEs or bundled Linux GUI applications · Preview in WebView2",
             Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(174, 190, 210)
         });
@@ -195,39 +197,53 @@ internal sealed class MainForm : Form
         };
         left.Controls.Add(note);
 
-        left.Controls.Add(MakeLabel("RUN A LINUX GUI APPLICATION (WSL2)", 10F, true, 4, 888, 340, 24));
+        left.Controls.Add(MakeLabel("RUN BUNDLED LINUX APPLICATION (NO WSL)", 10F, true, 4, 888, 340, 24));
+
+        _embeddedLinuxXeyesButton.Text = "Launch xeyes (Embedded Linux / QEMU)";
+        _embeddedLinuxXeyesButton.SetBounds(8, 924, 340, 40);
+        StyleSecondaryButton(_embeddedLinuxXeyesButton);
+        _embeddedLinuxXeyesButton.Click += async (_, _) => await StartEmbeddedLinuxTestAsync("xeyes");
+        left.Controls.Add(_embeddedLinuxXeyesButton);
+
+        _embeddedLinuxXtermButton.Text = "Launch xterm (Embedded Linux / QEMU)";
+        _embeddedLinuxXtermButton.SetBounds(8, 970, 340, 40);
+        StyleSecondaryButton(_embeddedLinuxXtermButton);
+        _embeddedLinuxXtermButton.Click += async (_, _) => await StartEmbeddedLinuxTestAsync("xterm");
+        left.Controls.Add(_embeddedLinuxXtermButton);
+
+        left.Controls.Add(MakeLabel("RUN A LINUX GUI APPLICATION (WSL2 - OPTIONAL)", 10F, true, 4, 1030, 340, 24));
 
         _linuxUrlInput.Multiline = true;
         _linuxUrlInput.ScrollBars = ScrollBars.Vertical;
         _linuxUrlInput.PlaceholderText = "Direct GitHub Release URL for an x86-64 .AppImage or ELF binary";
         _linuxUrlInput.Height = 54;
-        AddField(left, "Linux AppImage / ELF URL", _linuxUrlInput, 922, 944);
+        AddField(left, "Linux AppImage / ELF URL", _linuxUrlInput, 1062, 1084);
 
         _linuxShaInput.PlaceholderText = "64-character SHA-256";
         _linuxShaInput.Height = 28;
-        AddField(left, "Expected SHA-256", _linuxShaInput, 1006, 1028);
+        AddField(left, "Expected SHA-256", _linuxShaInput, 1146, 1168);
 
         _linuxArgumentsInput.Multiline = true;
         _linuxArgumentsInput.ScrollBars = ScrollBars.Vertical;
         _linuxArgumentsInput.PlaceholderText = "Optional Linux arguments";
         _linuxArgumentsInput.Height = 54;
-        AddField(left, "Linux command-line arguments", _linuxArgumentsInput, 1066, 1088);
+        AddField(left, "Linux command-line arguments", _linuxArgumentsInput, 1206, 1228);
 
-        _wslStatusButton.Text = "Check WSL2 / WSLg readiness";
-        _wslStatusButton.SetBounds(8, 1154, 340, 40);
+        _wslStatusButton.Text = "Check WSL2 / WSLg readiness (optional)";
+        _wslStatusButton.SetBounds(8, 1294, 340, 40);
         StyleSecondaryButton(_wslStatusButton);
         _wslStatusButton.Click += async (_, _) => await CheckWslAsync();
         left.Controls.Add(_wslStatusButton);
 
         _linuxTestButton.Text = "Launch WSLg interactive test (xterm)";
-        _linuxTestButton.SetBounds(8, 1200, 340, 40);
+        _linuxTestButton.SetBounds(8, 1340, 340, 40);
         StyleSecondaryButton(_linuxTestButton);
         _linuxTestButton.Click += async (_, _) => await StartLinuxTestAsync();
         left.Controls.Add(_linuxTestButton);
 
-        _linuxRunButton.Text = "Download, verify and run Linux app";
+        _linuxRunButton.Text = "Download, verify and run Linux app (WSL)";
         StylePrimaryButton(_linuxRunButton);
-        _linuxRunButton.SetBounds(8, 1246, 340, 42);
+        _linuxRunButton.SetBounds(8, 1386, 340, 42);
         _linuxRunButton.Click += async (_, _) => await RunLinuxAsync();
         left.Controls.Add(_linuxRunButton);
 
@@ -443,6 +459,20 @@ internal sealed class MainForm : Form
             Log(response.Message);
             _status.Text = response.Success ? "● " + response.Message : "○ " + response.Message;
             _status.ForeColor = response.Success ? Color.LightGreen : Color.Salmon;
+        });
+    }
+
+    private async Task StartEmbeddedLinuxTestAsync(string application)
+    {
+        await StopLivePreviewAsync();
+
+        await RunCommandAsync(async () =>
+        {
+            Log($"Starting the bundled Embedded Linux VM with {application}...");
+            var response = await _agent.SendAsync(new AgentCommand(
+                "start-embedded-linux-test",
+                Application: application));
+            ApplyAgentResponse(response);
         });
     }
 
@@ -1216,6 +1246,8 @@ internal sealed class MainForm : Form
         _runButton.Enabled = enabled;
         _wslStatusButton.Enabled = enabled;
         _linuxTestButton.Enabled = enabled;
+        _embeddedLinuxXeyesButton.Enabled = enabled;
+        _embeddedLinuxXtermButton.Enabled = enabled;
         _linuxRunButton.Enabled = enabled;
         _captureButton.Enabled = enabled && _activeWindowHandle.HasValue && _previewCts is null;
         _startPreviewButton.Enabled = enabled && _activeWindowHandle.HasValue && _previewCts is null;
