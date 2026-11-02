@@ -13,7 +13,12 @@
     h1{font-size:25px;margin:0 0 7px}
     h2{font-size:17px;margin:0 0 10px}
     p{color:#afc0d6;line-height:1.5;margin:7px 0 14px}
-    video{width:100%;aspect-ratio:16/9;background:#050a12;border-radius:9px;object-fit:contain}
+    video{width:100%;aspect-ratio:16/9;background:#050a12;border-radius:9px;object-fit:contain;touch-action:none;user-select:none;cursor:crosshair}
+    .control-tools{margin:10px 0 14px;padding:12px;border:1px solid #34465f;border-radius:9px;background:#0b1728}
+    .control-tools .text-row{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:7px}
+    .control-tools input{min-width:0;width:100%;border:1px solid #3b4d67;border-radius:7px;background:#07111f;color:#dbeafe;padding:10px}
+    .control-tools button{margin:0}
+    .control-hint{font-size:12px;color:#94a9c4;margin:8px 0 0}
     label{display:block;font-weight:600;margin:13px 0 6px}
     textarea{width:100%;min-height:130px;resize:vertical;background:#07111f;color:#dbeafe;border:1px solid #3b4d67;border-radius:7px;padding:10px;font:11px Consolas,monospace}
     button{width:100%;margin:5px 0;padding:10px 12px;border:0;border-radius:7px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}
@@ -32,8 +37,17 @@
 <main>
   <section class="viewer">
     <h1>CloudRunner Remote Viewer</h1>
-    <p>Receive a live, view-only Windows application preview from a CloudRunner host. This page does not install software or run the remote EXE on your computer.</p>
-    <video id="remote-video" autoplay playsinline muted controls></video>
+    <p>Receive a live application preview from a CloudRunner host. This page does not install software or run the remote application on your computer.</p>
+    <video id="remote-video" autoplay playsinline muted tabindex="0" aria-label="Remote application preview"></video>
+    <div class="control-tools">
+      <button id="toggle-control" class="secondary" disabled>Enable mouse + keyboard control</button>
+      <label for="remote-text">Send text to the remote application (also works with a phone keyboard)</label>
+      <div class="text-row">
+        <input id="remote-text" type="text" maxlength="256" autocomplete="off" placeholder="Type a command or text…" disabled>
+        <button id="send-text" disabled>Send text</button>
+      </div>
+      <p class="control-hint">To use physical keys, click the preview first. The host must separately approve remote control.</p>
+    </div>
     <p id="status" role="status">Waiting for a host offer.</p>
     <pre id="diagnostics" aria-live="polite">ICE diagnostics will appear after connection starts.</pre>
     <button id="copy-diagnostics" class="secondary">Copy ICE diagnostics</button>
@@ -50,7 +64,7 @@
     <label for="answer">2. Viewer answer (send this back to the host)</label>
     <textarea id="answer" spellcheck="false" readonly placeholder="Your answer will appear here…"></textarea>
     <button id="select-answer" class="secondary">Select answer text for copying</button>
-    <div class="notice">Only exchange connection text with someone you trust. The host offer contains network connection details. Anyone who completes the exchange can view the host's application window while that session remains active. This prototype has no remote mouse, keyboard, file transfer, or shell access.</div>
+    <div class="notice">Only exchange connection text with someone you trust. The host offer contains network connection details. Anyone who completes the exchange can view the host's application window. Remote input requires explicit approval from the host AND activation by the viewer. Mouse, keyboard and typed text are sent to the currently selected application only; there is no file transfer or shell access. Never enable control for an untrusted viewer.</div>
   </section>
 </main>
 <script>
@@ -58,6 +72,9 @@
   const offerBox = document.getElementById('offer');
   const answerBox = document.getElementById('answer');
   const video = document.getElementById('remote-video');
+  const toggleControlButton = document.getElementById('toggle-control');
+  const remoteTextInput = document.getElementById('remote-text');
+  const sendTextButton = document.getElementById('send-text');
   const status = document.getElementById('status');
   const diagnostics = document.getElementById('diagnostics');
   const createButton = document.getElementById('create-answer');
@@ -68,11 +85,160 @@
   let receivedVideoTrack = null;
   let screenWakeLock = null;
   let keepAwakeRequested = false;
+  let controlChannel = null;
+  let controlEnabled = false;
+  let lastPointerMoveAt = 0;
+  const pressedRemoteKeys = new Set();
   const keepAwakeButton = document.getElementById('keep-awake');
 
   function setStatus(message) {
     status.textContent = message;
   }
+
+  function sendControl(payload) {
+    if (!controlEnabled || !controlChannel || controlChannel.readyState !== 'open') return false;
+    try {
+      controlChannel.send(JSON.stringify(payload));
+      return true;
+    } catch (error) {
+      setStatus('Could not send remote input: ' + (error?.message || String(error)));
+      return false;
+    }
+  }
+
+  function setControlEnabled(enabled) {
+    controlEnabled = !!enabled && !!controlChannel && controlChannel.readyState === 'open';
+    toggleControlButton.textContent = controlEnabled
+      ? 'Disable mouse + keyboard control'
+      : 'Enable mouse + keyboard control';
+    toggleControlButton.classList.toggle('awake', controlEnabled);
+    toggleControlButton.classList.toggle('secondary', !controlEnabled);
+    toggleControlButton.disabled = !controlChannel || controlChannel.readyState !== 'open';
+    remoteTextInput.disabled = !controlEnabled;
+    sendTextButton.disabled = !controlEnabled;
+    if (controlEnabled) {
+      setStatus('Viewer control enabled. The host must also have approved remote control.');
+      video.focus();
+    } else if (controlChannel?.readyState === 'open') {
+      setStatus('Viewer control disabled. Video viewing continues.');
+    }
+  }
+
+  function getVideoPoint(event) {
+    if (!video.videoWidth || !video.videoHeight) return null;
+    const rect = video.getBoundingClientRect();
+    const scale = Math.min(rect.width / video.videoWidth, rect.height / video.videoHeight);
+    const shownWidth = video.videoWidth * scale;
+    const shownHeight = video.videoHeight * scale;
+    const left = rect.left + (rect.width - shownWidth) / 2;
+    const top = rect.top + (rect.height - shownHeight) / 2;
+    const x = (event.clientX - left) / shownWidth;
+    const y = (event.clientY - top) / shownHeight;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+    return { x, y };
+  }
+
+  function attachControlChannel(channel) {
+    if (channel.label !== 'cloudrunner-control') {
+      channel.close();
+      return;
+    }
+    if (controlChannel) controlChannel.close();
+    controlChannel = channel;
+    controlChannel.onopen = () => {
+      toggleControlButton.disabled = false;
+      setStatus('Remote input channel connected. Ask the host to approve control, then enable it here.');
+    };
+    controlChannel.onclose = () => {
+      controlChannel = null;
+      setControlEnabled(false);
+      toggleControlButton.disabled = true;
+      setStatus('Remote input channel closed.');
+    };
+    controlChannel.onerror = () => setStatus('Remote input channel reported an error.');
+  }
+
+  function sendRemoteText() {
+    const text = remoteTextInput.value;
+    if (!text || text.length > 256) return;
+    if (sendControl({ kind: 'text', text })) {
+      remoteTextInput.value = '';
+      setStatus('Text sent to the remote application.');
+    }
+  }
+
+  toggleControlButton.addEventListener('click', () => {
+    setControlEnabled(!controlEnabled);
+  });
+  sendTextButton.addEventListener('click', sendRemoteText);
+  remoteTextInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      sendRemoteText();
+    }
+  });
+
+  video.addEventListener('pointerdown', event => {
+    if (!controlEnabled) return;
+    const point = getVideoPoint(event);
+    if (!point) return;
+    event.preventDefault();
+    video.focus();
+    try { video.setPointerCapture(event.pointerId); } catch { /* Optional browser support. */ }
+    sendControl({ kind: 'pointer', phase: 'down', button: event.button, ...point });
+  });
+  video.addEventListener('pointermove', event => {
+    if (!controlEnabled) return;
+    const now = Date.now();
+    if (now - lastPointerMoveAt < 35 && event.buttons === 0) return;
+    const point = getVideoPoint(event);
+    if (!point) return;
+    lastPointerMoveAt = now;
+    sendControl({ kind: 'pointer', phase: 'move', ...point });
+  });
+  function finishPointer(event) {
+    if (!controlEnabled) return;
+    const point = getVideoPoint(event);
+    if (!point) return;
+    sendControl({ kind: 'pointer', phase: 'up', button: event.button, ...point });
+  }
+  video.addEventListener('pointerup', finishPointer);
+  video.addEventListener('pointercancel', finishPointer);
+  video.addEventListener('contextmenu', event => {
+    if (controlEnabled) event.preventDefault();
+  });
+  video.addEventListener('wheel', event => {
+    if (!controlEnabled) return;
+    const point = getVideoPoint(event);
+    if (!point) return;
+    event.preventDefault();
+    sendControl({ kind: 'wheel', delta: -event.deltaY, ...point });
+  }, { passive: false });
+
+  function forwardKey(event, phase) {
+    if (!controlEnabled || document.activeElement !== video) return;
+    const keyCode = event.keyCode || event.which;
+    if (!keyCode || keyCode === 229) return;
+    if (sendControl({
+      kind: 'key', phase, keyCode,
+      ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey
+    })) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (phase === 'down') pressedRemoteKeys.add(keyCode);
+    else pressedRemoteKeys.delete(keyCode);
+  }
+  video.addEventListener('keydown', event => forwardKey(event, 'down'));
+  video.addEventListener('keyup', event => forwardKey(event, 'up'));
+  window.addEventListener('blur', () => {
+    if (controlEnabled) {
+      for (const keyCode of pressedRemoteKeys) {
+        sendControl({ kind: 'key', phase: 'up', keyCode, ctrlKey: false, shiftKey: false, altKey: false });
+      }
+      pressedRemoteKeys.clear();
+    }
+  });
 
   function countLocalCandidates(pc) {
     const sdp = pc.localDescription?.sdp || '';
@@ -249,10 +415,17 @@
       statsTimer = null;
     }
     receivedVideoTrack = null;
+    setControlEnabled(false);
+    if (controlChannel) {
+      controlChannel.close();
+      controlChannel = null;
+    }
     if (peerConnection) {
       peerConnection.close();
       peerConnection = null;
     }
+    toggleControlButton.disabled = true;
+    remoteTextInput.value = '';
     video.srcObject = null;
     disconnectButton.disabled = true;
     setStatus('Disconnected.');
@@ -276,6 +449,7 @@
         ]
       });
       peerConnection = pc;
+      pc.addEventListener('datachannel', event => attachControlChannel(event.channel));
       disconnectButton.disabled = false;
 
       pc.addEventListener('track', event => {
