@@ -374,6 +374,98 @@ internal sealed class ExecutionSession : IAsyncDisposable
         }
     }
 
+    public async Task<AgentResponse> StartEmbeddedLinuxTestAsync(
+        string application,
+        CancellationToken cancellationToken)
+    {
+        await CleanupExitedProcessAsync();
+
+        if (HasActiveProcess())
+        {
+            return CurrentActiveProcessResponse(
+                "An application is already running. Stop it before starting another session.",
+                success: false);
+        }
+
+        EnsureStandardUserContext();
+
+        if (application is not ("xeyes" or "xterm"))
+        {
+            throw new InvalidOperationException("The embedded Linux test application must be xeyes or xterm.");
+        }
+
+        var runtime = EmbeddedLinuxRuntime.Resolve();
+
+        Directory.CreateDirectory(_jobsRoot);
+        _jobDirectory = Path.Combine(_jobsRoot, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_jobDirectory);
+
+        try
+        {
+            var overlayPath = Path.Combine(_jobDirectory, "guest-overlay.qcow2");
+            var serialLogPath = Path.Combine(_jobDirectory, "guest-serial.log");
+
+            await EmbeddedLinuxRuntime.CreateWritableOverlayAsync(
+                runtime, overlayPath, cancellationToken);
+
+            var startInfo = EmbeddedLinuxRuntime.CreateQemuStartInfo(
+                runtime, application, overlayPath, serialLogPath);
+
+            _process = new Process
+            {
+                StartInfo = startInfo,
+                EnableRaisingEvents = true
+            };
+
+            if (!_process.Start())
+            {
+                throw new InvalidOperationException("Windows could not start the bundled QEMU virtual machine.");
+            }
+
+            _job = new KillOnCloseJob();
+            _job.Assign(_process);
+
+            var window = await WaitForMainWindowAsync(_process, cancellationToken);
+            var appName = application == "xeyes" ? "xeyes" : "xterm";
+            var message = window.Handle == 0
+                ? $"The embedded Linux VM started for {appName}, but its QEMU display window was not detected yet. Refresh process / window status."
+                : $"Embedded Linux VM started. {appName} is booting in the bundled QEMU guest; no WSL or Ubuntu installation is required.";
+
+            return new AgentResponse(
+                true,
+                message,
+                _process.Id,
+                window.Handle,
+                window.Title);
+        }
+        catch
+        {
+            if (_process is not null)
+            {
+                try
+                {
+                    if (!_process.HasExited)
+                    {
+                        _process.Kill(entireProcessTree: true);
+                        await _process.WaitForExitAsync(CancellationToken.None);
+                    }
+                }
+                catch
+                {
+                    // Preserve the original QEMU launch error.
+                }
+
+                _process.Dispose();
+                _process = null;
+            }
+
+            _job?.Dispose();
+            _job = null;
+            DeleteJobDirectory();
+            throw;
+        }
+    }
+
     public async Task<AgentResponse> StartTestWindowAsync(CancellationToken cancellationToken)
     {
         await CleanupExitedProcessAsync();
