@@ -259,9 +259,18 @@
       return null;
     }
 
-    // Keep coordinates relative to the original capture frame. The host maps
-    // these directly to the captured HWND/desktop coordinates.
-    return { x, y };
+    // The captured frame can contain a desktop/letterbox area around the
+    // actual application window. The native host maps 0..1 across the HWND,
+    // so rebase the visible application rectangle to the full HWND rectangle.
+    // Filtering without this normalization still sends offset coordinates.
+    const width = bounds.right - bounds.left;
+    const height = bounds.bottom - bounds.top;
+    if (width <= 0 || height <= 0) return null;
+
+    return {
+      x: Math.max(0, Math.min(1, (x - bounds.left) / width)),
+      y: Math.max(0, Math.min(1, (y - bounds.top) / height))
+    };
   }
 
   function attachControlChannel(channel) {
